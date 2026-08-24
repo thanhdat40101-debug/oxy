@@ -70,53 +70,43 @@ def fetch_api_data(url):
 
 def fetch_prediction_tomdayy():
     """
-    Trích xuất linh hoạt dự đoán, độ tin cậy và lý do phân tích từ API tomdayy.site
+    Lấy dự đoán từ API tomdayy.site, xử lý triệt để lỗi PHP Warning ở đầu văn bản.
     """
     raw_response = fetch_api_data(URL_PREDICT_TOMDAYY)
     
     dudoan = "Tài"
     confidence = 85
-    analysis = "Dữ liệu thuật toán phiên hiện tại"
+    analysis = "Kích hoạt mô hình phân tích thuật toán"
 
     if not raw_response:
         return dudoan, confidence, analysis
 
-    # Trường hợp API trả về JSON
+    # Nếu API trả về chuỗi text bị dính PHP Warning, dùng Regex bóc riêng đoạn JSON {...}
+    if isinstance(raw_response, str):
+        json_match = re.search(r'\{.*\}', raw_response)
+        if json_match:
+            try:
+                raw_response = json.loads(json_match.group(0))
+            except Exception as e:
+                print(f"⚠️ Lỗi bóc tách JSON bằng Regex: {e}")
+
+    # Trích xuất dữ liệu khi đã chuẩn hóa thành Dictionary
     if isinstance(raw_response, dict):
-        pred_raw = str(raw_response.get("predict", raw_response.get("dudoan", raw_response.get("result", "Tài")))).upper()
+        pred_raw = str(raw_response.get("prediction", raw_response.get("predict", raw_response.get("dudoan", "TÀI")))).upper()
         dudoan = "Tài" if ("TÀI" in pred_raw or "TAI" in pred_raw) else "Xỉu"
         
-        conf_raw = str(raw_response.get("confidence", raw_response.get("rate", raw_response.get("tyle", "85")))).replace("%", "")
+        conf_raw = str(raw_response.get("confidence", raw_response.get("rate", "85"))).replace("%", "")
         try:
             confidence = int(float(conf_raw))
         except:
             confidence = 85
             
-        analysis = raw_response.get("analysis", raw_response.get("lydo", raw_response.get("reason", raw_response.get("msg", analysis))))
-
-    # Trường hợp API trả về HTML/Text
-    elif isinstance(raw_response, str):
-        text_upper = raw_response.upper()
-        if "XỈU" in text_upper or "XIU" in text_upper:
-            dudoan = "Xỉu"
-        elif "TÀI" in text_upper or "TAI" in text_upper:
-            dudoan = "Tài"
-
-        # Bắt tỷ lệ % từ text
-        rate_match = re.search(r'(\d+)%', raw_response)
-        if rate_match:
-            confidence = int(rate_match.group(1))
-
-        # Làm sạch chuỗi text để lấy làm lý do phân tích
-        clean_text = re.sub(r'<[^>]+>', ' ', raw_response)
-        clean_text = ' '.join(clean_text.split())
-        if len(clean_text) > 5:
-            analysis = clean_text
+        analysis = raw_response.get("analysis", raw_response.get("lydo", analysis))
 
     return dudoan, confidence, analysis
 
 def parse_kwin_item(data):
-    """Trích xuất dữ liệu bàn từ API Kwinstore"""
+    """Trích xuất dữ liệu kết quả bàn từ API Kwinstore"""
     if not data:
         return None
 
@@ -159,7 +149,7 @@ def parse_kwin_item(data):
         else:
             actual = "Chưa có"
 
-    # Lấy dự đoán trực tiếp từ Tomdayy
+    # Lấy dự đoán trực tiếp từ Tomdayy API
     dudoan, confidence, analysis = fetch_prediction_tomdayy()
 
     return {
@@ -216,7 +206,7 @@ def format_beauty_message(kwin_json):
     conf_num = parsed["confidence"]
     analysis = parsed["analysis"]
     win_icon = "🔴" if dudoan == "Tài" else "🔵"
-    other_conf = 100 - conf_num
+    other_conf = round(100 - conf_num, 1)
 
     wins = STATS_MD5["win"]
     losses = STATS_MD5["loss"]
