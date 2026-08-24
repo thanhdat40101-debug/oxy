@@ -6,7 +6,7 @@ import requests
 from flask import Flask
 from telebot import TeleBot, types
 
-# ==================== WEB SERVER GIẢ ĐỂ RENDER CHẠY 24/7 ====================
+# Web server cho Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -17,7 +17,6 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# Self-ping giữ nhịp chống ngủ đông
 def self_ping():
     time.sleep(10)
     url = "https://oxy-1-tz8l.onrender.com/"
@@ -28,11 +27,10 @@ def self_ping():
             pass
         time.sleep(600)
 
-# ==================== CẤU HÌNH BOT TELEGRAM ====================
+# Cấu hình Bot Telegram
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
 bot = TeleBot(BOT_TOKEN, threaded=True)
 
-# URL API HitClub theo ảnh
 HITCLUB_ENDPOINTS = {
     "hitclub_tx": "https://tool.tomdayy.site/dashboard.php?ajax_predict=1&source=hitclub_tx",
     "hitclub_md5": "https://tool.tomdayy.site/dashboard.php?ajax_predict=1&source=hitclub_md5"
@@ -45,19 +43,34 @@ def fetch_hitclub_data(url):
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
-            try:
-                return response.json()
-            except json.JSONDecodeError:
-                return response.text
-        return f"Lỗi HTTP {response.status_code}: Không thể lấy dữ liệu từ HitClub."
-    except Exception as e:
-        return f"Lỗi kết nối API: {str(e)}"
+            return response.json()
+        return None
+    except Exception:
+        return None
 
-def format_response(title, data):
-    if isinstance(data, (dict, list)):
-        formatted_json = json.dumps(data, ensure_ascii=False, indent=2)
-        return f"🔥 **{title}**\n```json\n{formatted_json}\n```"
-    return f"🔥 **{title}**\n{data}"
+def format_beauty_message(game_name, data):
+    if not data or not isinstance(data, dict):
+        return "❌ Không thể lấy dữ liệu từ hệ thống, vui lòng thử lại sau!"
+    
+    phien = data.get("phien", "N/A")
+    dudoan = data.get("prediction", "N/A")
+    tl_thang = data.get("confidence", "N/A")
+    phantich = data.get("analysis", "N/A")
+
+    # Tạo biểu tượng Tài/Xỉu
+    icon = "🔴" if dudoan == "TÀI" else "🔵"
+
+    msg = (
+        f"🎮 **DỰ ĐOÁN KẾT QUẢ {game_name}**\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📌 **Phiên tiếp theo:** `#{phien}`\n"
+        f"{icon} **Dự đoán:** **{dudoan}**\n"
+        f"🎯 **Tỷ lệ tin cậy:** `{tl_thang}%`\n"
+        f"💡 **Phân tích:** _{phantich}_\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"⏰ *Cập nhật tự động từ hệ thống!*"
+    )
+    return msg
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
@@ -69,21 +82,21 @@ def send_welcome(message):
     
     bot.reply_to(
         message, 
-        "🤖 **Bot Tra Cứu HITCLUB**\nChọn loại dự đoán/dữ liệu bạn muốn tra cứu:",
+        "🤖 **Bot Tra Cứu HITCLUB**\nChọn loại game bạn muốn lấy dự đoán:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
-    bot.answer_callback_query(call.id, "Đang lấy dữ liệu HitClub...")
+    bot.answer_callback_query(call.id, "Đang xử lý dự đoán...")
     
     if call.data in HITCLUB_ENDPOINTS:
-        title = "Dữ Liệu HitClub TX" if call.data == "hitclub_tx" else "Dữ Liệu HitClub MD5"
+        game_name = "HITCLUB TÀI XỈU" if call.data == "hitclub_tx" else "HITCLUB MD5"
         url = HITCLUB_ENDPOINTS[call.data]
         
         data = fetch_hitclub_data(url)
-        msg = format_response(title, data)
+        msg = format_beauty_message(game_name, data)
         
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
