@@ -109,8 +109,6 @@ def format_beauty_message_image2(game_type, data, last_result=None):
     win_pct = round((wins / total * 100), 1) if total > 0 else 50.0
 
     cau_str = generate_cau_string(history_list)
-
-    # Ẩn dòng Mã MD5 nếu là sảnh Tài Xỉu (hitclub_tx)
     md5_line = "🔑 Mã MD5: Chưa cập nhật\n" if not is_tx else ""
 
     msg = (
@@ -132,26 +130,27 @@ def format_beauty_message_image2(game_type, data, last_result=None):
         f"• {analysis}\n\n"
         f"🌐 Cầu: {cau_str}\n"
         f"📊 Thành tích: {wins} Thắng · {losses} Thua ({win_pct}%)\n"
-        f"💬 Nhập /11 để xem chi tiết 15 tay gần nhất."
+        f"💬 Nhập /11 để xem chi tiết các tay gần nhất."
     )
     return msg
 
-def get_thongke_text(game_type):
+def get_thongke_text(game_type, limit=15):
     history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
     game_title = "HITCLUB TÀI XỈU" if game_type == "hitclub_tx" else "HITCLUB MD5"
     
     if not history_list:
         return f"📊 **THỐNG KÊ DỰ ĐOÁN {game_title}**\nChưa có dữ liệu thống kê phiên gần đây."
     
-    wins = sum(1 for item in history_list if item.get('status_text') == 'THẮNG')
-    total = len([item for item in history_list if item.get('status_text') in ['THẮNG', 'THUA']])
+    sub_list = history_list[-limit:]
+    wins = sum(1 for item in sub_list if item.get('status_text') == 'THẮNG')
+    total = len([item for item in sub_list if item.get('status_text') in ['THẮNG', 'THUA']])
     win_rate = round((wins / total * 100), 1) if total > 0 else 0.0
 
-    msg = f"📊 **THỐNG KÊ 15 PHIÊN GẦN ĐÂY - {game_title}**\n"
+    msg = f"📊 **THỐNG KÊ {len(sub_list)} PHIÊN GẦN ĐÂY - {game_title}**\n"
     msg += f"📈 **Tỷ lệ Thắng:** `{wins}/{total}` (`{win_rate}%`)\n"
     msg += f"━━━━━━━━━━━━━━━━━━\n"
     
-    for item in history_list[-15:]:
+    for item in sub_list:
         status_str = f"{item.get('status_icon', '⏳')} {item.get('status_text', 'Đang chờ')}"
         msg += f"🔹 `# {item['phien']}`: Dự đoán **{item['prediction']}** (`{item['confidence']}%`) ➡️ {status_str}\n"
     msg += "━━━━━━━━━━━━━━━━━━"
@@ -171,8 +170,8 @@ def build_menu_keyboard(chat_id):
     btn_tx = types.InlineKeyboardButton("🎲 Soi TX Ngay", callback_data="hitclub_tx")
     btn_md5 = types.InlineKeyboardButton("⚡ Soi MD5 Ngay", callback_data="hitclub_md5")
     
-    btn_hist_tx = types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="hist_tx")
-    btn_hist_md5 = types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="hist_md5")
+    btn_hist_tx = types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="menu_hist_tx")
+    btn_hist_md5 = types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="menu_hist_md5")
     
     markup.add(btn_toggle_tx, btn_toggle_md5)
     markup.add(btn_tx, btn_md5)
@@ -231,7 +230,7 @@ def auto_checker():
                         "status_text": "Đang chờ"
                     }
                     history_list.append(new_item)
-                    if len(history_list) > 30:
+                    if len(history_list) > 60:
                         history_list.pop(0)
 
                     msg = format_beauty_message_image2(game_type, data, last_result_info)
@@ -261,7 +260,7 @@ def send_welcome(message):
             message, 
             "🤖 **BOT TRA CỨU HITCLUB AUTOMATIC**\n\n"
             "⚙️ **CÀI ĐẶT BẬT/TẮT TỰ ĐỘNG:**\n"
-            "Nhập `/11` để xem chi tiết 15 tay gần nhất!",
+            "Nhập `/11` để chọn xem số lượng tay thống kê mong muốn!",
             reply_markup=markup,
             parse_mode="Markdown"
         )
@@ -273,10 +272,10 @@ def send_thongke_command(message):
     try:
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="hist_tx"),
-            types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="hist_md5")
+            types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="menu_hist_tx"),
+            types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="menu_hist_md5")
         )
-        bot.reply_to(message, "Chọn loại game bạn muốn xem thống kê 15 phiên gần nhất:", reply_markup=markup)
+        bot.reply_to(message, "Chọn sảnh game bạn muốn xem thống kê:", reply_markup=markup)
     except Exception as e:
         print(f"Error 11: {e}")
 
@@ -315,15 +314,44 @@ def handle_callback(call):
             msg = format_beauty_message_image2(call.data, data, last_result)
             bot.send_message(chat_id, msg)
             
-        elif call.data == "hist_tx":
+        elif call.data == "menu_hist_tx":
             bot.answer_callback_query(call.id)
-            msg = get_thongke_text("hitclub_tx")
-            bot.send_message(chat_id, msg, parse_mode="Markdown")
-            
-        elif call.data == "hist_md5":
+            markup = types.InlineKeyboardMarkup(row_width=3)
+            markup.add(
+                types.InlineKeyboardButton("5 Tay", callback_data="hist_tx_5"),
+                types.InlineKeyboardButton("10 Tay", callback_data="hist_tx_10"),
+                types.InlineKeyboardButton("15 Tay", callback_data="hist_tx_15"),
+                types.InlineKeyboardButton("20 Tay", callback_data="hist_tx_20"),
+                types.InlineKeyboardButton("30 Tay", callback_data="hist_tx_30"),
+                types.InlineKeyboardButton("50 Tay", callback_data="hist_tx_50")
+            )
+            bot.edit_message_text("🎲 **CHỌN SỐ LƯỢNG TAY TÀI XỈU CẦN XEM:**", chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+        elif call.data == "menu_hist_md5":
             bot.answer_callback_query(call.id)
-            msg = get_thongke_text("hitclub_md5")
+            markup = types.InlineKeyboardMarkup(row_width=3)
+            markup.add(
+                types.InlineKeyboardButton("5 Tay", callback_data="hist_md5_5"),
+                types.InlineKeyboardButton("10 Tay", callback_data="hist_md5_10"),
+                types.InlineKeyboardButton("15 Tay", callback_data="hist_md5_15"),
+                types.InlineKeyboardButton("20 Tay", callback_data="hist_md5_20"),
+                types.InlineKeyboardButton("30 Tay", callback_data="hist_md5_30"),
+                types.InlineKeyboardButton("50 Tay", callback_data="hist_md5_50")
+            )
+            bot.edit_message_text("⚡ **CHỌN SỐ LƯỢNG TAY MD5 CẦN XEM:**", chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+        elif call.data.startswith("hist_tx_"):
+            limit = int(call.data.split("_")[2])
+            bot.answer_callback_query(call.id, f"Đang tải {limit} tay Tài Xỉu...")
+            msg = get_thongke_text("hitclub_tx", limit)
             bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        elif call.data.startswith("hist_md5_"):
+            limit = int(call.data.split("_")[2])
+            bot.answer_callback_query(call.id, f"Đang tải {limit} tay MD5...")
+            msg = get_thongke_text("hitclub_md5", limit)
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+
     except Exception as e:
         print(f"Error callback: {e}")
 
@@ -341,3 +369,4 @@ if __name__ == "__main__":
     threading.Thread(target=self_ping, daemon=True).start()
     threading.Thread(target=auto_checker, daemon=True).start()
     run_bot()
+    
