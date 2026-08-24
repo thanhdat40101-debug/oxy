@@ -55,7 +55,7 @@ def get_user_setting(chat_id):
 def fetch_api_data(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01"
+        "Accept": "*/*"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -69,29 +69,49 @@ def fetch_api_data(url):
     return None
 
 def fetch_prediction_tomdayy():
-    """Lấy dự đoán từ API tomdayy.site"""
-    raw_data = fetch_api_data(URL_PREDICT_TOMDAYY)
+    """
+    Trích xuất linh hoạt dự đoán, độ tin cậy và lý do phân tích từ API tomdayy.site
+    """
+    raw_response = fetch_api_data(URL_PREDICT_TOMDAYY)
     
     dudoan = "Tài"
     confidence = 85
-    analysis = "Kích hoạt mô hình phân tích thuật toán Tomdayy"
+    analysis = "Dữ liệu thuật toán phiên hiện tại"
 
-    if isinstance(raw_data, dict):
-        pred_raw = str(raw_data.get("predict", raw_data.get("dudoan", raw_data.get("result", "Tài")))).upper()
+    if not raw_response:
+        return dudoan, confidence, analysis
+
+    # Trường hợp API trả về JSON
+    if isinstance(raw_response, dict):
+        pred_raw = str(raw_response.get("predict", raw_response.get("dudoan", raw_response.get("result", "Tài")))).upper()
         dudoan = "Tài" if ("TÀI" in pred_raw or "TAI" in pred_raw) else "Xỉu"
         
-        conf_raw = str(raw_data.get("confidence", raw_data.get("rate", raw_data.get("tyle", "85")))).replace("%", "")
+        conf_raw = str(raw_response.get("confidence", raw_response.get("rate", raw_response.get("tyle", "85")))).replace("%", "")
         try:
             confidence = int(float(conf_raw))
         except:
             confidence = 85
             
-        analysis = raw_data.get("analysis", raw_data.get("lydo", analysis))
-    elif isinstance(raw_data, str):
-        if "XỈU" in raw_data.upper() or "XIU" in raw_data.upper():
+        analysis = raw_response.get("analysis", raw_response.get("lydo", raw_response.get("reason", raw_response.get("msg", analysis))))
+
+    # Trường hợp API trả về HTML/Text
+    elif isinstance(raw_response, str):
+        text_upper = raw_response.upper()
+        if "XỈU" in text_upper or "XIU" in text_upper:
             dudoan = "Xỉu"
-        elif "TÀI" in raw_data.upper() or "TAI" in raw_data.upper():
+        elif "TÀI" in text_upper or "TAI" in text_upper:
             dudoan = "Tài"
+
+        # Bắt tỷ lệ % từ text
+        rate_match = re.search(r'(\d+)%', raw_response)
+        if rate_match:
+            confidence = int(rate_match.group(1))
+
+        # Làm sạch chuỗi text để lấy làm lý do phân tích
+        clean_text = re.sub(r'<[^>]+>', ' ', raw_response)
+        clean_text = ' '.join(clean_text.split())
+        if len(clean_text) > 5:
+            analysis = clean_text
 
     return dudoan, confidence, analysis
 
@@ -139,7 +159,7 @@ def parse_kwin_item(data):
         else:
             actual = "Chưa có"
 
-    # Lấy dự đoán từ tomdayy.site
+    # Lấy dự đoán trực tiếp từ Tomdayy
     dudoan, confidence, analysis = fetch_prediction_tomdayy()
 
     return {
