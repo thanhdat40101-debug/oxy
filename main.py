@@ -19,14 +19,18 @@ def run_web():
     app.run(host='0.0.0.0', port=port)
 
 def self_ping():
-    time.sleep(10)
-    url = "https://oxy-1-tz8l.onrender.com/"
+    time.sleep(15)
+    # Lấy URL tự động từ môi trường Render hoặc fallback về link mặc định
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://oxy-1-tz8l.onrender.com/")
+    print(f"📌 Started Self-Ping service for: {render_url}")
+    
     while True:
         try:
-            requests.get(url, timeout=10)
-        except Exception:
-            pass
-        time.sleep(120)
+            res = requests.get(render_url, timeout=10)
+            print(f"🔄 Self-ping status: {res.status_code}")
+        except Exception as e:
+            print(f"⚠️ Self-ping error: {e}")
+        time.sleep(120) # Ping mỗi 2 phút
 
 # ==================== CẤU HÌNH BOT TELEGRAM ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
@@ -59,12 +63,12 @@ def fetch_hitclub_data(url):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=8)
         if response.status_code == 200:
             return response.json()
-        return None
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"❌ Error fetching API ({url}): {e}")
+    return None
 
 def generate_cau_string(history_list):
     if not history_list:
@@ -119,7 +123,7 @@ def format_beauty_message_image2(game_type, data, last_result=None):
         f"🎯 Kết quả: {dudoan}\n"
         f"{eval_icon} ĐÁNH GIÁ: {last_status}\n"
         f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"╭━━━ 🤖 DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
+        f"╭━━━ 🤖 D DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
         f"1️⃣2️⃣ Phiên kế tiếp: {curr_phien}\n\n"
         f"🎯 Dự đoán: {dudoan} {win_icon}\n"
         f"📊 Độ tin cậy: {conf_num}%\n"
@@ -241,10 +245,10 @@ def auto_checker():
                                 bot.send_message(chat_id, msg)
                             elif game_type == "hitclub_md5" and settings.get("md5", False):
                                 bot.send_message(chat_id, msg)
-                        except Exception:
-                            pass
+                        except Exception as send_err:
+                            print(f"⚠️ Error sending message to {chat_id}: {send_err}")
         except Exception as e:
-            print(f"Lỗi Auto Checker: {e}")
+            print(f"❌ Lỗi Auto Checker: {e}")
         
         time.sleep(5)
 
@@ -356,12 +360,12 @@ def handle_callback(call):
         print(f"Error callback: {e}")
 
 def run_bot():
-    print("Bot HitClub VIP đang chạy...")
+    print("🚀 Bot HitClub VIP đang bắt đầu polling...")
     while True:
         try:
             bot.infinity_polling(timeout=60, long_polling_timeout=30)
         except Exception as e:
-            print(f"Lỗi polling, đang tự động kết nối lại: {e}")
+            print(f"⚠️ Lỗi polling, đang tự động kết nối lại sau 5s: {e}")
             time.sleep(5)
 
 if __name__ == "__main__":
@@ -369,4 +373,4 @@ if __name__ == "__main__":
     threading.Thread(target=self_ping, daemon=True).start()
     threading.Thread(target=auto_checker, daemon=True).start()
     run_bot()
-    
+        
