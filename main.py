@@ -1,7 +1,6 @@
 import os
 import json
 import time
-import random
 import re
 import threading
 import requests
@@ -69,13 +68,12 @@ def fetch_hitclub_data(url):
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             text = response.text
-            # Tách lấy đoạn JSON kể cả khi web nguồn bị chèn lỗi PHP Warning
             json_match = re.search(r'\{.*\}', text)
             if json_match:
                 clean_json_str = json_match.group(0)
                 return json.loads(clean_json_str)
     except Exception as e:
-        print(f"❌ Error fetching/parsing API ({url}): {e}")
+        print(f"❌ Error fetching API ({url}): {e}")
     return None
 
 def generate_cau_string(history_list):
@@ -83,7 +81,7 @@ def generate_cau_string(history_list):
         return "🔵🔴🔵🔴🔵🔴"
     cau_icons = []
     for item in history_list[-6:]:
-        pred = item.get("prediction", "TÀI")
+        pred = item.get("prediction", "TÀI").upper()
         cau_icons.append("🔴" if pred == "TÀI" else "🔵")
     return "".join(cau_icons)
 
@@ -99,16 +97,23 @@ def format_beauty_message_image2(game_type, data, last_result=None):
     curr_phien = data.get("phien", "2581936")
     dudoan = str(data.get("prediction", "Tài")).capitalize()
     confidence = str(data.get("confidence", "55"))
-    analysis = data.get("analysis", "Dùng xác suất mặc định từ hệ thống AI")
+    analysis = data.get("analysis", "Kích hoạt mô hình phân tích dữ liệu")
 
+    # Xử lý thông tin phiên vừa ra (kết quả thực tế)
     prev_phien = str(int(curr_phien) - 1) if str(curr_phien).isdigit() else "2581935"
-    last_status = "THẮNG"
+    actual_result = "Chưa rõ"
+    dice_str = "Chưa cập nhật"
+    last_status = "Đang chờ"
+    
     if last_result:
         prev_phien = last_result.get("phien", prev_phien)
+        actual_result = last_result.get("actual_result", "N/A")
+        dice_str = last_result.get("dice_str", "Chưa cập nhật")
         last_status = last_result.get("status_text", "THẮNG")
 
-    eval_icon = "✅" if last_status == "THẮNG" else "❌"
+    eval_icon = "✅" if last_status == "THẮNG" else ("❌" if last_status == "THUA" else "⏳")
     win_icon = "🔴" if dudoan == "Tài" else "🔵"
+    
     try:
         conf_num = int(float(confidence))
     except (ValueError, TypeError):
@@ -126,9 +131,9 @@ def format_beauty_message_image2(game_type, data, last_result=None):
     msg = (
         f"╭━━━ KẾT QUẢ SẢNH {game_title} ━━━╮\n"
         f"📌 Phiên: {prev_phien}\n"
-        f"🎲 Xúc xắc: 2 · 6 · 6 ➔ Tổng 14\n"
+        f"🎲 Xúc xắc: {dice_str}\n"
         f"{md5_line}"
-        f"🎯 Kết quả: {dudoan}\n"
+        f"🎯 Kết quả: {actual_result}\n"
         f"{eval_icon} ĐÁNH GIÁ: {last_status}\n"
         f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
         f"╭━━━ 🤖 DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
@@ -215,29 +220,51 @@ def auto_checker():
                     else:
                         LAST_PHIEN_MD5 = curr_phien
                     
+                    # Bóc tách dữ liệu thực tế từ API nếu có
+                    result_raw = str(data.get("result", data.get("ketqua", ""))).upper()
+                    dice_data = data.get("dice", data.get("xucxac", None))
+                    
+                    if isinstance(dice_data, list) and len(dice_data) == 3:
+                        total_dice = sum(dice_data)
+                        dice_str = f"{dice_data[0]} · {dice_data[1]} · {dice_data[2]} ➔ Tổng {total_dice}"
+                        actual_result = "Tài" if total_dice >= 11 else "Xỉu"
+                    elif result_raw in ["TÀI", "XỈU"]:
+                        actual_result = result_raw.capitalize()
+                        dice_str = f"Kết quả {actual_result}"
+                    else:
+                        actual_result = "Chưa có"
+                        dice_str = "Chờ cập nhật"
+
                     last_result_info = None
                     
+                    # Cập nhật kết quả phiên trước dựa trên thực tế
                     if history_list:
                         prev_item = history_list[-1]
-                        try:
-                            conf = float(prev_item.get('confidence', 80))
-                        except (ValueError, TypeError):
-                            conf = 80.0
+                        prev_item['actual_result'] = actual_result
+                        prev_item['dice_str'] = dice_str
                         
-                        is_win = random.random() * 100 <= conf
-                        if is_win:
-                            STATS[st_key]["win"] += 1
-                        else:
-                            STATS[st_key]["loss"] += 1
-
-                        prev_item['status_icon'] = "🟢" if is_win else "🔴"
-                        prev_item['status_text'] = "THẮNG" if is_win else "THUA"
+                        pred_str = str(prev_item.get('prediction', '')).upper()
+                        act_str = actual_result.upper()
+                        
+                        if act_str in ["TÀI", "XỈU"]:
+                            if pred_str == act_str:
+                                prev_item['status_icon'] = "🟢"
+                                prev_item['status_text'] = "THẮNG"
+                                STATS[st_key]["win"] += 1
+                            else:
+                                prev_item['status_icon'] = "🔴"
+                                prev_item['status_text'] = "THUA"
+                                STATS[st_key]["loss"] += 1
+                        
                         last_result_info = prev_item
 
+                    # Thêm phiên mới vào danh sách chờ
                     new_item = {
                         "phien": curr_phien,
-                        "prediction": data.get("prediction", "N/A"),
+                        "prediction": str(data.get("prediction", "N/A")).capitalize(),
                         "confidence": data.get("confidence", "N/A"),
+                        "actual_result": "Đang chờ",
+                        "dice_str": "Đang chờ",
                         "status_icon": "⏳",
                         "status_text": "Đang chờ"
                     }
