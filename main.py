@@ -1,16 +1,27 @@
 import os
 import json
+import threading
 import requests
+from flask import Flask
 from telebot import TeleBot, types
 
-# Bot Token của bạn
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
-# Thay YOUR_KEY bên dưới thành Key API thật từ kwinstore của bạn
-API_KEY = os.getenv("API_KEY", "YOUR_KEY") 
+# Tạo web server giả để Render cấp link
+app = Flask(__name__)
 
+@app.route('/')
+def home():
+    return "Bot Telegram đang chạy 24/7!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# Token và logic Bot Telegram
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
+API_KEY = os.getenv("API_KEY", "YOUR_KEY")
 BASE_URL = "https://kwinstore.com"
 
-bot = TeleBot(BOT_TOKEN)
+bot = TeleBot(BOT_TOKEN, threaded=True)
 
 def fetch_data(endpoint):
     url = f"{BASE_URL}{endpoint}/{API_KEY}"
@@ -40,31 +51,29 @@ def send_welcome(message):
     btn_md5_hist = types.InlineKeyboardButton("📜 Lịch Sử MD5", callback_data="md5_history")
     
     markup.add(btn_tx, btn_tx_hist, btn_md5, btn_md5_hist)
-    
-    bot.reply_to(
-        message, 
-        "🤖 **Bot Tra Cứu SUMCLUB**\nChọn chức năng bạn muốn xem bên dưới:",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
+    bot.reply_to(message, "🤖 **Bot Tra Cứu SUMCLUB**\nChọn chức năng bạn muốn xem bên dưới:", reply_markup=markup, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     bot.answer_callback_query(call.id, "Đang tải dữ liệu...")
-    
     endpoints = {
         "tx": ("/sumclub/tx", "Kết Quả TX"),
         "tx_history": ("/sumclub/tx/history", "Lịch Sử TX"),
         "md5": ("/sumclub/md5", "Kết Quả MD5"),
         "md5_history": ("/sumclub/md5/history", "Lịch Sử MD5")
     }
-    
     if call.data in endpoints:
         endpoint, title = endpoints[call.data]
         data = fetch_data(endpoint)
         msg = format_response(title, data)
         bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
 
-if __name__ == "__main__":
+def run_bot():
     print("Bot Sumclub đang chạy...")
-    bot.infinity_polling()
+    bot.infinity_polling(non_stop=True)
+
+if __name__ == "__main__":
+    # Chạy Web Server trên 1 luồng riêng
+    threading.Thread(target=run_web).start()
+    # Chạy Bot Telegram
+    run_bot()
