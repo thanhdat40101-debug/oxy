@@ -26,7 +26,7 @@ def self_ping():
             requests.get(url, timeout=10)
         except Exception:
             pass
-        time.sleep(600)
+        time.sleep(120)  # Ping 2 phút/lần để giữ Render luôn sống
 
 # ==================== CẤU HÌNH BOT TELEGRAM ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
@@ -39,7 +39,6 @@ HISTORY_MD5 = []
 LAST_PHIEN_TX = None
 LAST_PHIEN_MD5 = None
 
-# Đếm tổng thành tích Thắng/Thua
 STATS = {
     "tx": {"win": 4987, "loss": 4997},
     "md5": {"win": 4987, "loss": 4997}
@@ -85,11 +84,10 @@ def format_beauty_message_image2(game_type, data, last_result=None):
     history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
 
     curr_phien = data.get("phien", "2581936")
-    dudoan = data.get("prediction", "Tài").capitalize()
-    confidence = data.get("confidence", "55")
+    dudoan = str(data.get("prediction", "Tài")).capitalize()
+    confidence = str(data.get("confidence", "55"))
     analysis = data.get("analysis", "Dùng xác suất mặc định từ hệ thống AI")
 
-    # Giả lập dữ liệu phiên trước theo UI Ảnh 2
     prev_phien = str(int(curr_phien) - 1) if str(curr_phien).isdigit() else "2581935"
     last_status = "THẮNG"
     if last_result:
@@ -99,7 +97,7 @@ def format_beauty_message_image2(game_type, data, last_result=None):
     win_icon = "🔴" if dudoan == "Tài" else "🔵"
     try:
         conf_num = int(float(confidence))
-    except ValueError:
+    except (ValueError, TypeError):
         conf_num = 55
     other_conf = 100 - conf_num
 
@@ -142,7 +140,7 @@ def get_thongke_text(game_type):
     
     wins = sum(1 for item in history_list if item.get('status_text') == 'THẮNG')
     total = len([item for item in history_list if item.get('status_text') in ['THẮNG', 'THUA']])
-    win_rate = round((wins / total * 100), 1) if total > 0 else 0
+    win_rate = round((wins / total * 100), 1) if total > 0 else 0.0
 
     msg = f"📊 **THỐNG KÊ 15 PHIÊN GẦN ĐÂY - {game_title}**\n"
     msg += f"📈 **Tỷ lệ Thắng:** `{wins}/{total}` (`{win_rate}%`)\n"
@@ -205,7 +203,10 @@ def auto_checker():
                     
                     if history_list:
                         prev_item = history_list[-1]
-                        conf = float(prev_item.get('confidence', 80))
+                        try:
+                            conf = float(prev_item.get('confidence', 80))
+                        except (ValueError, TypeError):
+                            conf = 80.0
                         
                         is_win = random.random() * 100 <= conf
                         if is_win:
@@ -246,75 +247,89 @@ def auto_checker():
 # ==================== LỆNH BOT TELEGRAM ====================
 @bot.message_handler(commands=['start', 'help', 'setting', 'caidat'])
 def send_welcome(message):
-    chat_id = message.chat.id
-    get_user_setting(chat_id)
-    
-    markup = build_menu_keyboard(chat_id)
-    bot.reply_to(
-        message, 
-        "🤖 **BOT TRA CỨU HITCLUB AUTOMATIC**\n\n"
-        "⚙️ **CÀI ĐẶT BẬT/TẮT TỰ ĐỘNG:**\n"
-        "Nhập `/11` để xem chi tiết 15 tay gần nhất!",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
+    try:
+        chat_id = message.chat.id
+        get_user_setting(chat_id)
+        
+        markup = build_menu_keyboard(chat_id)
+        bot.reply_to(
+            message, 
+            "🤖 **BOT TRA CỨU HITCLUB AUTOMATIC**\n\n"
+            "⚙️ **CÀI ĐẶT BẬT/TẮT TỰ ĐỘNG:**\n"
+            "Nhập `/11` để xem chi tiết 15 tay gần nhất!",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Error start: {e}")
 
 @bot.message_handler(commands=['11', 'ls11', 'thongke'])
 def send_thongke_command(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="hist_tx"),
-        types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="hist_md5")
-    )
-    bot.reply_to(message, "Chọn loại game bạn muốn xem thống kê 15 phiên gần nhất:", reply_markup=markup)
+    try:
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="hist_tx"),
+            types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="hist_md5")
+        )
+        bot.reply_to(message, "Chọn loại game bạn muốn xem thống kê 15 phiên gần nhất:", reply_markup=markup)
+    except Exception as e:
+        print(f"Error 11: {e}")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
-    chat_id = call.message.chat.id
-    settings = get_user_setting(chat_id)
-    
-    if call.data == "toggle_tx":
-        settings["tx"] = not settings["tx"]
-        if settings["tx"]:
-            settings["md5"] = False
-            bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto Tài Xỉu & TẮT Auto MD5!")
-        else:
-            bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto Tài Xỉu!")
-        bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
+    try:
+        chat_id = call.message.chat.id
+        settings = get_user_setting(chat_id)
+        
+        if call.data == "toggle_tx":
+            settings["tx"] = not settings["tx"]
+            if settings["tx"]:
+                settings["md5"] = False
+                bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto Tài Xỉu & TẮT Auto MD5!")
+            else:
+                bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto Tài Xỉu!")
+            bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
-    elif call.data == "toggle_md5":
-        settings["md5"] = not settings["md5"]
-        if settings["md5"]:
-            settings["tx"] = False
-            bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto MD5 & TẮT Auto Tài Xỉu!")
-        else:
-            bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto MD5!")
-        bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
+        elif call.data == "toggle_md5":
+            settings["md5"] = not settings["md5"]
+            if settings["md5"]:
+                settings["tx"] = False
+                bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto MD5 & TẮT Auto Tài Xỉu!")
+            else:
+                bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto MD5!")
+            bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
-    elif call.data in HITCLUB_ENDPOINTS:
-        bot.answer_callback_query(call.id, "Đang tải dự đoán...")
-        url = HITCLUB_ENDPOINTS[call.data]
-        
-        data = fetch_hitclub_data(url)
-        history_list = HISTORY_TX if call.data == "hitclub_tx" else HISTORY_MD5
-        last_result = history_list[-2] if len(history_list) >= 2 else None
-        
-        msg = format_beauty_message_image2(call.data, data, last_result)
-        bot.send_message(chat_id, msg)
-        
-    elif call.data == "hist_tx":
-        bot.answer_callback_query(call.id)
-        msg = get_thongke_text("hitclub_tx")
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
-        
-    elif call.data == "hist_md5":
-        bot.answer_callback_query(call.id)
-        msg = get_thongke_text("hitclub_md5")
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
+        elif call.data in HITCLUB_ENDPOINTS:
+            bot.answer_callback_query(call.id, "Đang tải dự đoán...")
+            url = HITCLUB_ENDPOINTS[call.data]
+            
+            data = fetch_hitclub_data(url)
+            history_list = HISTORY_TX if call.data == "hitclub_tx" else HISTORY_MD5
+            last_result = history_list[-2] if len(history_list) >= 2 else None
+            
+            msg = format_beauty_message_image2(call.data, data, last_result)
+            bot.send_message(chat_id, msg)
+            
+        elif call.data == "hist_tx":
+            bot.answer_callback_query(call.id)
+            msg = get_thongke_text("hitclub_tx")
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+            
+        elif call.data == "hist_md5":
+            bot.answer_callback_query(call.id)
+            msg = get_thongke_text("hitclub_md5")
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Error callback: {e}")
 
 def run_bot():
     print("Bot HitClub VIP đang chạy...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=30)
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=30)
+        except Exception as e:
+            print(f"Lỗi polling, đang tự động kết nối lại: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
