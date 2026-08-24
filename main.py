@@ -46,7 +46,6 @@ STATS = {
     "md5": {"win": 4987, "loss": 4997}
 }
 
-# API mới từ Railway
 RAILWAY_ENDPOINTS = {
     "hitclub_hu": "https://bottele-production-4be9.up.railway.app/api/history/taixiu",
     "hitclub_md5": "https://bottele-production-4be9.up.railway.app/api/history/md5"
@@ -66,7 +65,7 @@ def fetch_railway_data(url):
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            if isinstance(data, list) and len(data) > 0:
+            if isinstance(data, list):
                 return data
             elif isinstance(data, dict):
                 return data.get("data", data.get("history", [data]))
@@ -74,89 +73,91 @@ def fetch_railway_data(url):
         print(f"❌ Error fetching Railway API ({url}): {e}")
     return None
 
-def analyze_prediction(history_list):
-    """Thuật toán dự đoán phiên tiếp theo dựa trên lịch sử"""
-    if not history_list:
-        return "Tài", "89", "Smart Chaos Engine: Kích hoạt mô hình phân phối biến động"
+def parse_item(item):
+    """Trích xuất dữ liệu chuẩn từ item của Railway API"""
+    phien = str(item.get("phien", item.get("session", item.get("id", "0"))))
     
-    recent = history_list[-10:]
-    tai_count = sum(1 for item in recent if str(item.get("result", "")).upper() == "TÀI")
-    
-    if tai_count >= 5:
-        pred = "Tài"
-        conf = min(55 + tai_count * 5, 92)
-        analysis = f"Weighting Engine: Trọng số ưu tiên cửa trên ({tai_count}/10 phiên)"
+    # Lấy thông tin xúc xắc
+    dice = item.get("dice", item.get("dices", item.get("xucxac", [])))
+    if isinstance(dice, list) and len(dice) == 3:
+        total = sum(dice)
+        dice_str = f"{dice[0]} · {dice[1]} · {dice[2]} ➔ Tổng {total}"
+        actual = "Tài" if total >= 11 else "Xỉu"
     else:
-        pred = "Xỉu"
-        conf = min(55 + (10 - tai_count) * 5, 92)
-        analysis = f"Weighting Engine: Trọng số ưu tiên cửa dưới ({10 - tai_count}/10 phiên)"
-        
-    return pred, str(conf), analysis
+        dice_str = "Chưa cập nhật"
+        actual = str(item.get("result", item.get("ketqua", "Chưa có"))).capitalize()
+
+    # Lấy dự đoán từ API
+    dudoan = str(item.get("predict", item.get("dudoan", item.get("prediction", "Tài")))).capitalize()
+    confidence = str(item.get("confidence", item.get("rate", item.get("tyle", "75")))).replace("%", "")
+    analysis = item.get("analysis", item.get("lydo", "Kích hoạt mô hình phân tích dữ liệu thuật toán"))
+
+    return {
+        "phien": phien,
+        "dice_str": dice_str,
+        "actual": actual,
+        "dudoan": dudoan,
+        "confidence": confidence,
+        "analysis": analysis
+    }
 
 def generate_cau_string(history_list):
     if not history_list:
         return "🔵🔴🔵🔴🔵🔴"
     cau_icons = []
     for item in history_list[-6:]:
-        res = str(item.get("actual_result", item.get("result", "TÀI"))).upper()
+        res = str(item.get("actual", "Tài")).upper()
         cau_icons.append("🔴" if "TÀI" in res else "🔵")
     return "".join(cau_icons)
 
-def format_beauty_message(game_type, history_data):
-    if not history_data or not isinstance(history_data, list):
-        return "❌ Không thể lấy dữ liệu từ hệ thống, vui lòng thử lại sau!"
+def format_beauty_message(game_type, data_list):
+    if not data_list or not isinstance(data_list, list) or len(data_list) == 0:
+        return "❌ Không thể lấy dữ liệu từ hệ thống API, vui lòng thử lại sau!"
     
     is_hu = (game_type == "hitclub_hu")
     game_title = "HŨ" if is_hu else "MD5"
     st_key = "hu" if is_hu else "md5"
     history_list = HISTORY_HU if is_hu else HISTORY_MD5
 
-    latest = history_data[0] # Phiên gần nhất đã ra kết quả
-    prev_phien = latest.get("phien", latest.get("session", "3128226"))
+    parsed_latest = parse_item(data_list[0])
+    prev_phien = parsed_latest["phien"]
     
     try:
         curr_phien = str(int(prev_phien) + 1)
     except:
         curr_phien = "3128227"
 
-    # Thông tin phiên cũ
-    dice_arr = latest.get("dice", latest.get("dices", [1, 2, 3]))
-    if isinstance(dice_arr, list) and len(dice_arr) == 3:
-        dice_str = f"{dice_arr[0]} · {dice_arr[1]} · {dice_arr[2]} ➔ Tổng {sum(dice_arr)}"
-        actual_result = "Tài" if sum(dice_arr) >= 11 else "Xỉu"
-    else:
-        dice_str = str(dice_arr)
-        actual_result = latest.get("result", "Chưa có").capitalize()
-
-    # Tính dự đoán cho phiên mới
-    dudoan, confidence, analysis = analyze_prediction(history_list)
-    win_icon = "🔴" if dudoan == "Tài" else "🔵"
-    
-    try:
-        conf_num = int(float(confidence))
-    except:
-        conf_num = 89
-    other_conf = 100 - conf_num
+    actual_result = parsed_latest["actual"]
+    dice_str = parsed_latest["dice_str"]
 
     # Đánh giá tay trước
     last_status = "THẮNG"
-    if history_list and len(history_list) > 0:
-        prev_pred = history_list[-1].get("prediction", "")
-        if prev_pred and prev_pred.upper() != actual_result.upper():
+    if len(history_list) > 1:
+        prev_item = history_list[-2]
+        if prev_item.get("dudoan", "").upper() != actual_result.upper():
             last_status = "THUA"
             
     eval_icon = "✅" if last_status == "THẮNG" else "❌"
-    md5_line = "🔑 Mã MD5: Chưa cập nhật\n" if not is_hu else ""
 
     result_block = (
         f"╭━━━ KẾT QUẢ SẢNH {game_title} ━━━╮\n"
         f"📌 Phiên: {prev_phien}\n"
         f"🎲 Xúc xắc: {dice_str}\n"
-        f"{md5_line}"
         f"🎯 Kết quả: {actual_result}\n"
         f"{eval_icon} ĐÁNH GIÁ: {last_status}\n"
         f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
     )
+
+    dudoan = parsed_latest["dudoan"]
+    confidence = parsed_latest["confidence"]
+    analysis = parsed_latest["analysis"]
+    win_icon = "🔴" if dudoan == "Tài" else "🔵"
+    
+    try:
+        conf_num = int(float(confidence))
+    except:
+        conf_num = 75
+    other_conf = 100 - conf_num
 
     wins = STATS[st_key]["win"]
     losses = STATS[st_key]["loss"]
@@ -191,16 +192,16 @@ def get_thongke_text(game_type, limit=15):
     
     sub_list = history_list[-limit:]
     wins = sum(1 for item in sub_list if item.get('status_text') == 'THẮNG')
-    total = len([item for item in sub_list if item.get('status_text') in ['THẮNG', 'THUA']])
+    total = len(sub_list)
     win_rate = round((wins / total * 100), 1) if total > 0 else 0.0
 
-    msg = f"📊 **THỐNG KÊ {len(sub_list)} PHIÊN GẦN ĐÂY - {game_title}**\n"
+    msg = f"📊 **THỐNG KÊ {total} PHIÊN GẦN ĐÂY - {game_title}**\n"
     msg += f"📈 **Tỷ lệ Thắng:** `{wins}/{total}` (`{win_rate}%`)\n"
     msg += f"━━━━━━━━━━━━━━━━━━\n"
     
     for item in sub_list:
         status_str = f"{item.get('status_icon', '🟢')} {item.get('status_text', 'THẮNG')}"
-        msg += f"🔹 `# {item['phien']}`: Dự đoán **{item.get('prediction', 'Tài')}** ➡️ {status_str}\n"
+        msg += f"🔹 `# {item['phien']}`: Dự đoán **{item.get('dudoan', 'Tài')}** ➡️ {status_str}\n"
     msg += "━━━━━━━━━━━━━━━━━━"
     return msg
 
@@ -234,12 +235,12 @@ def auto_checker():
         try:
             for game_type, url in RAILWAY_ENDPOINTS.items():
                 data_list = fetch_railway_data(url)
-                if not data_list or not isinstance(data_list, list):
+                if not data_list or not isinstance(data_list, list) or len(data_list) == 0:
                     continue
                 
-                latest = data_list[0]
-                curr_phien = str(latest.get("phien", latest.get("session", "")))
-                if not curr_phien:
+                parsed = parse_item(data_list[0])
+                curr_phien = parsed["phien"]
+                if not curr_phien or curr_phien == "0":
                     continue
                 
                 last_phien = LAST_PHIEN_HU if game_type == "hitclub_hu" else LAST_PHIEN_MD5
@@ -251,33 +252,20 @@ def auto_checker():
                         LAST_PHIEN_HU = curr_phien
                     else:
                         LAST_PHIEN_MD5 = curr_phien
-                    
-                    pred, conf, _ = analyze_prediction(history_list)
-                    
-                    dice_arr = latest.get("dice", latest.get("dices", []))
-                    if isinstance(dice_arr, list) and len(dice_arr) == 3:
-                        actual_result = "Tài" if sum(dice_arr) >= 11 else "Xỉu"
-                    else:
-                        actual_result = latest.get("result", "Tài").capitalize()
 
                     status_icon = "🟢"
                     status_text = "THẮNG"
-                    if pred.upper() == actual_result.upper():
+                    if parsed["dudoan"].upper() == parsed["actual"].upper():
                         STATS[st_key]["win"] += 1
                     else:
                         status_icon = "🔴"
                         status_text = "THUA"
                         STATS[st_key]["loss"] += 1
 
-                    new_item = {
-                        "phien": curr_phien,
-                        "prediction": pred,
-                        "confidence": conf,
-                        "actual_result": actual_result,
-                        "status_icon": status_icon,
-                        "status_text": status_text
-                    }
-                    history_list.append(new_item)
+                    parsed["status_icon"] = status_icon
+                    parsed["status_text"] = status_text
+                    
+                    history_list.append(parsed)
                     if len(history_list) > 60:
                         history_list.pop(0)
 
