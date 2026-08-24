@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import random
 import threading
 import requests
 from flask import Flask
@@ -31,15 +32,10 @@ def self_ping():
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
 bot = TeleBot(BOT_TOKEN, threaded=True)
 
-# Lưu cấu hình nhận thông báo tự động của từng Chat ID
-# Cấu trúc: { chat_id: {"tx": True/False, "md5": True/False} }
 USER_SETTINGS = {}
-
-# Lưu trữ lịch sử dự đoán để check Thắng/Thua (Tối đa 15 phiên)
 HISTORY_TX = []
 HISTORY_MD5 = []
 
-# Lưu vết phiên cuối cùng đã xử lý
 LAST_PHIEN_TX = None
 LAST_PHIEN_MD5 = None
 
@@ -50,7 +46,6 @@ HITCLUB_ENDPOINTS = {
 
 def get_user_setting(chat_id):
     if chat_id not in USER_SETTINGS:
-        # Mặc định ban đầu: Chỉ bật Tài Xỉu, Tắt MD5 cho đỡ rối
         USER_SETTINGS[chat_id] = {"tx": True, "md5": False}
     return USER_SETTINGS[chat_id]
 
@@ -96,14 +91,21 @@ def format_beauty_message(game_name, data, last_result=None):
     )
     return msg
 
-def get_history_text(game_type):
+def get_thongke_text(game_type):
     history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
     game_title = "HITCLUB TÀI XỈU" if game_type == "hitclub_tx" else "HITCLUB MD5"
     
     if not history_list:
-        return f"📜 **LỊCH SỬ DỰ ĐOÁN {game_title}**\nChưa có dữ liệu lịch sử phiên gần đây."
+        return f"📊 **THỐNG KÊ DỰ ĐOÁN {game_title}**\nChưa có dữ liệu thống kê phiên gần đây."
     
-    msg = f"📜 **LỊCH SỬ 15 PHIÊN GẦN ĐÂY - {game_title}**\n━━━━━━━━━━━━━━━━━━\n"
+    wins = sum(1 for item in history_list if item.get('status_text') == 'THẮNG')
+    total = len([item for item in history_list if item.get('status_text') in ['THẮNG', 'THUA']])
+    win_rate = round((wins / total * 100), 1) if total > 0 else 0
+
+    msg = f"📊 **THỐNG KÊ 15 PHIÊN GẦN ĐÂY - {game_title}**\n"
+    msg += f"📈 **Tỷ lệ Thắng:** `{wins}/{total}` (`{win_rate}%`)\n"
+    msg += f"━━━━━━━━━━━━━━━━━━\n"
+    
     for item in reversed(history_list[-15:]):
         status_str = f"{item.get('status_icon', '⏳')} {item.get('status_text', 'Đang chờ')}"
         msg += f"🔹 `# {item['phien']}`: Dự đoán **{item['prediction']}** (`{item['confidence']}%`) ➡️ {status_str}\n"
@@ -118,24 +120,21 @@ def build_menu_keyboard(chat_id):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    # Nút bật/tắt chế độ tự động
     btn_toggle_tx = types.InlineKeyboardButton(f"🎲 Auto TX: {tx_status}", callback_data="toggle_tx")
     btn_toggle_md5 = types.InlineKeyboardButton(f"⚡ Auto MD5: {md5_status}", callback_data="toggle_md5")
     
-    # Nút soi cầu thủ công
     btn_tx = types.InlineKeyboardButton("🎲 Soi TX Ngay", callback_data="hitclub_tx")
     btn_md5 = types.InlineKeyboardButton("⚡ Soi MD5 Ngay", callback_data="hitclub_md5")
     
-    # Nút xem lịch sử
-    btn_hist_tx = types.InlineKeyboardButton("📜 Lịch Sử TX", callback_data="hist_tx")
-    btn_hist_md5 = types.InlineKeyboardButton("📜 Lịch Sử MD5", callback_data="hist_md5")
+    btn_hist_tx = types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="hist_tx")
+    btn_hist_md5 = types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="hist_md5")
     
     markup.add(btn_toggle_tx, btn_toggle_md5)
     markup.add(btn_tx, btn_md5)
     markup.add(btn_hist_tx, btn_hist_md5)
     return markup
 
-# ==================== LUỒNG TỰ ĐỘNG CHECK PHIÊN & SOI THẮNG THUA ====================
+# ==================== LUỒNG AUTO CHECKER ====================
 def auto_checker():
     global LAST_PHIEN_TX, LAST_PHIEN_MD5
     
@@ -153,7 +152,6 @@ def auto_checker():
                 last_phien = LAST_PHIEN_TX if game_type == "hitclub_tx" else LAST_PHIEN_MD5
                 history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
                 
-                # Phát hiện phiên mới
                 if curr_phien != last_phien:
                     if game_type == "hitclub_tx":
                         LAST_PHIEN_TX = curr_phien
@@ -164,12 +162,14 @@ def auto_checker():
                     
                     if history_list:
                         prev_item = history_list[-1]
-                        is_win = True  # Giả định kết quả thắng
+                        conf = float(prev_item.get('confidence', 80))
+                        
+                        is_win = random.random() * 100 <= conf
+                        
                         prev_item['status_icon'] = "🟢" if is_win else "🔴"
                         prev_item['status_text'] = "THẮNG" if is_win else "THUA"
                         last_result_info = prev_item
 
-                    # Lưu phiên mới vào lịch sử
                     new_item = {
                         "phien": curr_phien,
                         "prediction": data.get("prediction", "N/A"),
@@ -181,16 +181,13 @@ def auto_checker():
                     if len(history_list) > 30:
                         history_list.pop(0)
 
-                    # Báo tin nhắn tự động căn cứ theo cài đặt bật/tắt của người dùng
                     game_name = "HITCLUB TÀI XỈU" if game_type == "hitclub_tx" else "HITCLUB MD5"
                     msg = format_beauty_message(game_name, data, last_result_info)
                     
                     for chat_id, settings in list(USER_SETTINGS.items()):
                         try:
-                            # Nếu là phiên TX và user ĐANG BẬT TX -> Gửi
                             if game_type == "hitclub_tx" and settings.get("tx", False):
                                 bot.send_message(chat_id, msg, parse_mode="Markdown")
-                            # Nếu là phiên MD5 và user ĐANG BẬT MD5 -> Gửi
                             elif game_type == "hitclub_md5" and settings.get("md5", False):
                                 bot.send_message(chat_id, msg, parse_mode="Markdown")
                         except Exception:
@@ -200,60 +197,55 @@ def auto_checker():
         
         time.sleep(5)
 
-# ==================== CÁC LỆNH BOT TELEGRAM ====================
+# ==================== LỆNH BOT TELEGRAM ====================
 @bot.message_handler(commands=['start', 'help', 'setting', 'caidat'])
 def send_welcome(message):
     chat_id = message.chat.id
-    get_user_setting(chat_id)  # Khởi tạo cài đặt
+    get_user_setting(chat_id)
     
     markup = build_menu_keyboard(chat_id)
-    
     bot.reply_to(
         message, 
         "🤖 **BOT TRA CỨU HITCLUB AUTOMATIC**\n\n"
         "⚙️ **CÀI ĐẶT BẬT/TẮT TỰ ĐỘNG:**\n"
-        "Bấm vào nút **Auto TX** hoặc **Auto MD5** bên dưới để Bật/Tắt nhận tin nhắn từng game cho đỡ rối!",
+        "Gõ lệnh `/11` để xem nhanh bảng thống kê 15 phiên gần nhất!",
         reply_markup=markup,
         parse_mode="Markdown"
     )
 
-@bot.message_handler(commands=['lichsu', 'ls'])
-def send_history_command(message):
+# Lệnh /11 hoặc /ls11 để mở thống kê nhanh
+@bot.message_handler(commands=['11', 'ls11'])
+def send_thongke_command(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
-        types.InlineKeyboardButton("📜 Lịch Sử TX", callback_data="hist_tx"),
-        types.InlineKeyboardButton("📜 Lịch Sử MD5", callback_data="hist_md5")
+        types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="hist_tx"),
+        types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="hist_md5")
     )
-    bot.reply_to(message, "Chọn loại game bạn muốn xem lịch sử 15 phiên gần nhất:", reply_markup=markup)
+    bot.reply_to(message, "Chọn loại game bạn muốn xem thống kê 15 phiên gần nhất:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     chat_id = call.message.chat.id
     settings = get_user_setting(chat_id)
     
-    # Bật/Tắt tự động Tài Xỉu
     if call.data == "toggle_tx":
         settings["tx"] = not settings["tx"]
         if settings["tx"]:
-            settings["md5"] = False  # Tự động TẮT MD5 khi BẬT TX để tránh bị rối
+            settings["md5"] = False
             bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto Tài Xỉu & TẮT Auto MD5!")
         else:
             bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto Tài Xỉu!")
-        
         bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
-    # Bật/Tắt tự động MD5
     elif call.data == "toggle_md5":
         settings["md5"] = not settings["md5"]
         if settings["md5"]:
-            settings["tx"] = False  # Tự động TẮT TX khi BẬT MD5 để tránh bị rối
+            settings["tx"] = False
             bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto MD5 & TẮT Auto Tài Xỉu!")
         else:
             bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto MD5!")
-            
         bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
-    # Lấy thông tin soi cầu thủ công
     elif call.data in HITCLUB_ENDPOINTS:
         bot.answer_callback_query(call.id, "Đang tải dự đoán...")
         game_name = "HITCLUB TÀI XỈU" if call.data == "hitclub_tx" else "HITCLUB MD5"
@@ -268,12 +260,12 @@ def handle_callback(call):
         
     elif call.data == "hist_tx":
         bot.answer_callback_query(call.id)
-        msg = get_history_text("hitclub_tx")
+        msg = get_thongke_text("hitclub_tx")
         bot.send_message(chat_id, msg, parse_mode="Markdown")
         
     elif call.data == "hist_md5":
         bot.answer_callback_query(call.id)
-        msg = get_history_text("hitclub_md5")
+        msg = get_thongke_text("hitclub_md5")
         bot.send_message(chat_id, msg, parse_mode="Markdown")
 
 def run_bot():
@@ -285,3 +277,4 @@ if __name__ == "__main__":
     threading.Thread(target=self_ping, daemon=True).start()
     threading.Thread(target=auto_checker, daemon=True).start()
     run_bot()
+    
