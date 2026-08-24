@@ -2,6 +2,7 @@ import os
 import json
 import time
 import random
+import re
 import threading
 import requests
 from flask import Flask
@@ -20,7 +21,6 @@ def run_web():
 
 def self_ping():
     time.sleep(15)
-    # Lấy URL tự động từ môi trường Render hoặc fallback về link mặc định
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://oxy-1-tz8l.onrender.com/")
     print(f"📌 Started Self-Ping service for: {render_url}")
     
@@ -30,7 +30,7 @@ def self_ping():
             print(f"🔄 Self-ping status: {res.status_code}")
         except Exception as e:
             print(f"⚠️ Self-ping error: {e}")
-        time.sleep(120) # Ping mỗi 2 phút
+        time.sleep(120)
 
 # ==================== CẤU HÌNH BOT TELEGRAM ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
@@ -60,14 +60,22 @@ def get_user_setting(chat_id):
 
 def fetch_hitclub_data(url):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://tool.tomdayy.site/"
     }
     try:
-        response = requests.get(url, headers=headers, timeout=8)
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
-            return response.json()
+            text = response.text
+            # Tách lấy đoạn JSON kể cả khi web nguồn bị chèn lỗi PHP Warning
+            json_match = re.search(r'\{.*\}', text)
+            if json_match:
+                clean_json_str = json_match.group(0)
+                return json.loads(clean_json_str)
     except Exception as e:
-        print(f"❌ Error fetching API ({url}): {e}")
+        print(f"❌ Error fetching/parsing API ({url}): {e}")
     return None
 
 def generate_cau_string(history_list):
@@ -123,7 +131,7 @@ def format_beauty_message_image2(game_type, data, last_result=None):
         f"🎯 Kết quả: {dudoan}\n"
         f"{eval_icon} ĐÁNH GIÁ: {last_status}\n"
         f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"╭━━━ 🤖 D DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
+        f"╭━━━ 🤖 DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
         f"1️⃣2️⃣ Phiên kế tiếp: {curr_phien}\n\n"
         f"🎯 Dự đoán: {dudoan} {win_icon}\n"
         f"📊 Độ tin cậy: {conf_num}%\n"
@@ -373,4 +381,3 @@ if __name__ == "__main__":
     threading.Thread(target=self_ping, daemon=True).start()
     threading.Thread(target=auto_checker, daemon=True).start()
     run_bot()
-        
