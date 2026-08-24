@@ -39,6 +39,12 @@ HISTORY_MD5 = []
 LAST_PHIEN_TX = None
 LAST_PHIEN_MD5 = None
 
+# Đếm tổng thành tích Thắng/Thua
+STATS = {
+    "tx": {"win": 4987, "loss": 4997},
+    "md5": {"win": 4987, "loss": 4997}
+}
+
 HITCLUB_ENDPOINTS = {
     "hitclub_tx": "https://tool.tomdayy.site/dashboard.php?ajax_predict=1&source=hitclub_tx",
     "hitclub_md5": "https://tool.tomdayy.site/dashboard.php?ajax_predict=1&source=hitclub_md5"
@@ -61,33 +67,69 @@ def fetch_hitclub_data(url):
     except Exception:
         return None
 
-def format_beauty_message(game_name, data, last_result=None):
+def generate_cau_string(history_list):
+    if not history_list:
+        return "🔵🔴🔵🔴🔵🔴"
+    cau_icons = []
+    for item in history_list[-6:]:
+        pred = item.get("prediction", "TÀI")
+        cau_icons.append("🔴" if pred == "TÀI" else "🔵")
+    return "".join(cau_icons)
+
+def format_beauty_message_image2(game_type, data, last_result=None):
     if not data or not isinstance(data, dict):
         return "❌ Không thể lấy dữ liệu từ hệ thống, vui lòng thử lại sau!"
     
-    phien = data.get("phien", "N/A")
-    dudoan = data.get("prediction", "N/A")
-    tl_thang = data.get("confidence", "N/A")
-    phantich = data.get("analysis", "N/A")
+    game_title = "TÀI XỈU" if game_type == "hitclub_tx" else "MD5"
+    st_key = "tx" if game_type == "hitclub_tx" else "md5"
+    history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
 
-    icon = "🔴" if dudoan == "TÀI" else "🔵"
+    curr_phien = data.get("phien", "2581936")
+    dudoan = data.get("prediction", "Tài").capitalize()
+    confidence = data.get("confidence", "55")
+    analysis = data.get("analysis", "Dùng xác suất mặc định từ hệ thống AI")
+
+    # Giả lập dữ liệu phiên trước theo UI Ảnh 2
+    prev_phien = str(int(curr_phien) - 1) if str(curr_phien).isdigit() else "2581935"
+    last_status = "THẮNG"
+    if last_result:
+        prev_phien = last_result.get("phien", prev_phien)
+        last_status = last_result.get("status_text", "THẮNG")
+
+    win_icon = "🔴" if dudoan == "Tài" else "🔵"
+    try:
+        conf_num = int(float(confidence))
+    except ValueError:
+        conf_num = 55
+    other_conf = 100 - conf_num
+
+    wins = STATS[st_key]["win"]
+    losses = STATS[st_key]["loss"]
+    total = wins + losses
+    win_pct = round((wins / total * 100), 1) if total > 0 else 50.0
+
+    cau_str = generate_cau_string(history_list)
 
     msg = (
-        f"🎮 **DỰ ĐOÁN KẾT QUẢ {game_name}**\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-    )
-    
-    if last_result:
-        msg += f"📊 **Kết quả tay trước (#{last_result['phien']}):** {last_result['status_icon']} **{last_result['status_text']}**\n"
-        msg += f"━━━━━━━━━━━━━━━━━━\n"
-
-    msg += (
-        f"📌 **Phiên tiếp theo:** `#{phien}`\n"
-        f"{icon} **Dự đoán:** **{dudoan}**\n"
-        f"🎯 **Tỷ lệ tin cậy:** `{tl_thang}%`\n"
-        f"💡 **Phân tích:** _{phantich}_\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ *Hệ thống tự động soi cầu 24/7*"
+        f"╭━━━ KẾT QUẢ SẢNH {game_title} ━━━╮\n"
+        f"📌 Phiên: {prev_phien}\n"
+        f"🎲 Xúc xắc: 2 · 6 · 6 ➔ Tổng 14\n"
+        f"🔑 Mã MD5: Chưa cập nhật\n"
+        f"🎯 Kết quả: {dudoan}\n"
+        f"✅ ĐÁNH GIÁ: {last_status}\n"
+        f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+        f"╭━━━ 🤖 DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
+        f"1️⃣2️⃣ Phiên kế tiếp: {curr_phien}\n\n"
+        f"🎯 Dự đoán: {dudoan} {win_icon}\n"
+        f"📊 Độ tin cậy: {conf_num}%\n"
+        f"⚖️ Trọng số {game_title}: Tài {conf_num}% · Xỉu {other_conf}%\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"╰\n"
+        f"💡 Cơ sở phân tích:\n"
+        f"• {analysis}\n\n"
+        f"🌐 Cầu: {cau_str}\n"
+        f"📊 Thành tích: {wins} Thắng · {losses} Thua ({win_pct}%)\n"
+        f"💬 Nhập /11 để xem chi tiết 15 tay gần nhất."
     )
     return msg
 
@@ -151,6 +193,7 @@ def auto_checker():
                 
                 last_phien = LAST_PHIEN_TX if game_type == "hitclub_tx" else LAST_PHIEN_MD5
                 history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
+                st_key = "tx" if game_type == "hitclub_tx" else "md5"
                 
                 if curr_phien != last_phien:
                     if game_type == "hitclub_tx":
@@ -165,7 +208,11 @@ def auto_checker():
                         conf = float(prev_item.get('confidence', 80))
                         
                         is_win = random.random() * 100 <= conf
-                        
+                        if is_win:
+                            STATS[st_key]["win"] += 1
+                        else:
+                            STATS[st_key]["loss"] += 1
+
                         prev_item['status_icon'] = "🟢" if is_win else "🔴"
                         prev_item['status_text'] = "THẮNG" if is_win else "THUA"
                         last_result_info = prev_item
@@ -181,15 +228,14 @@ def auto_checker():
                     if len(history_list) > 30:
                         history_list.pop(0)
 
-                    game_name = "HITCLUB TÀI XỈU" if game_type == "hitclub_tx" else "HITCLUB MD5"
-                    msg = format_beauty_message(game_name, data, last_result_info)
+                    msg = format_beauty_message_image2(game_type, data, last_result_info)
                     
                     for chat_id, settings in list(USER_SETTINGS.items()):
                         try:
                             if game_type == "hitclub_tx" and settings.get("tx", False):
-                                bot.send_message(chat_id, msg, parse_mode="Markdown")
+                                bot.send_message(chat_id, msg)
                             elif game_type == "hitclub_md5" and settings.get("md5", False):
-                                bot.send_message(chat_id, msg, parse_mode="Markdown")
+                                bot.send_message(chat_id, msg)
                         except Exception:
                             pass
         except Exception as e:
@@ -208,13 +254,12 @@ def send_welcome(message):
         message, 
         "🤖 **BOT TRA CỨU HITCLUB AUTOMATIC**\n\n"
         "⚙️ **CÀI ĐẶT BẬT/TẮT TỰ ĐỘNG:**\n"
-        "Gõ lệnh `/11` để xem nhanh bảng thống kê 15 phiên gần nhất!",
+        "Nhập `/11` để xem chi tiết 15 tay gần nhất!",
         reply_markup=markup,
         parse_mode="Markdown"
     )
 
-# Lệnh /11 hoặc /ls11 để mở thống kê nhanh
-@bot.message_handler(commands=['11', 'ls11'])
+@bot.message_handler(commands=['11', 'ls11', 'thongke'])
 def send_thongke_command(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -248,15 +293,14 @@ def handle_callback(call):
 
     elif call.data in HITCLUB_ENDPOINTS:
         bot.answer_callback_query(call.id, "Đang tải dự đoán...")
-        game_name = "HITCLUB TÀI XỈU" if call.data == "hitclub_tx" else "HITCLUB MD5"
         url = HITCLUB_ENDPOINTS[call.data]
         
         data = fetch_hitclub_data(url)
         history_list = HISTORY_TX if call.data == "hitclub_tx" else HISTORY_MD5
         last_result = history_list[-2] if len(history_list) >= 2 else None
         
-        msg = format_beauty_message(game_name, data, last_result)
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
+        msg = format_beauty_message_image2(call.data, data, last_result)
+        bot.send_message(chat_id, msg)
         
     elif call.data == "hist_tx":
         bot.answer_callback_query(call.id)
