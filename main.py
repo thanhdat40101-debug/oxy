@@ -69,28 +69,24 @@ def fetch_api_data(url):
     return None
 
 def fetch_prediction_tomdayy():
-    """
-    Lấy dự đoán từ API tomdayy.site, xử lý triệt để lỗi PHP Warning ở đầu văn bản.
-    """
+    """Lấy dự đoán từ API tomdayy, xử lý triệt để PHP Warning ở đầu văn bản"""
     raw_response = fetch_api_data(URL_PREDICT_TOMDAYY)
     
     dudoan = "Tài"
     confidence = 85
-    analysis = "Kích hoạt mô hình phân tích thuật toán"
+    analysis = "Smart Chaos Engine: Kích hoạt mô hình phân phối biến động"
 
     if not raw_response:
         return dudoan, confidence, analysis
 
-    # Nếu API trả về chuỗi text bị dính PHP Warning, dùng Regex bóc riêng đoạn JSON {...}
     if isinstance(raw_response, str):
         json_match = re.search(r'\{.*\}', raw_response)
         if json_match:
             try:
                 raw_response = json.loads(json_match.group(0))
             except Exception as e:
-                print(f"⚠️ Lỗi bóc tách JSON bằng Regex: {e}")
+                print(f"⚠️ Lỗi parse JSON Regex: {e}")
 
-    # Trích xuất dữ liệu khi đã chuẩn hóa thành Dictionary
     if isinstance(raw_response, dict):
         pred_raw = str(raw_response.get("prediction", raw_response.get("predict", raw_response.get("dudoan", "TÀI")))).upper()
         dudoan = "Tài" if ("TÀI" in pred_raw or "TAI" in pred_raw) else "Xỉu"
@@ -106,50 +102,95 @@ def fetch_prediction_tomdayy():
     return dudoan, confidence, analysis
 
 def parse_kwin_item(data):
-    """Trích xuất dữ liệu kết quả bàn từ API Kwinstore"""
+    """
+    Trích xuất kết quả phiên, xúc xắc và kết quả Tài/Xỉu từ API Kwinstore
+    Hỗ trợ mọi định dạng key dữ liệu của Kwin MD5.
+    """
     if not data:
         return None
 
-    if isinstance(data, dict):
-        item = data.get("data", data.get("result", data))
-        if isinstance(item, list) and len(item) > 0:
-            item = item[0]
-    elif isinstance(data, list) and len(data) > 0:
-        item = data[0]
-    else:
-        return None
+    # Tìm dict thực sự chứa dữ liệu
+    item = data
+    if isinstance(item, dict):
+        for key in ["data", "result", "list", "items"]:
+            if key in item and isinstance(item[key], (list, dict)):
+                item = item[key]
+                break
+
+    if isinstance(item, list) and len(item) > 0:
+        item = item[0]
 
     if not isinstance(item, dict):
         return None
 
-    # Trích xuất Phiên
-    raw_phien = str(item.get("phien", item.get("phien_cu", item.get("session", item.get("sid", "0")))))
-    phien_digits = re.sub(r'\D', '', raw_phien)
-    phien = phien_digits if phien_digits else "0"
+    # 1. Trích xuất Phiên
+    phien = "0"
+    for p_key in ["phien", "phien_cu", "session", "sid", "id", "phien_id"]:
+        if p_key in item and item[p_key] is not None:
+            digits = re.sub(r'\D', '', str(item[p_key]))
+            if digits:
+                phien = digits
+                break
 
-    # Trích xuất Xúc xắc & Kết quả
-    dice = item.get("dice", item.get("dices", item.get("xucxac", [])))
-    if isinstance(dice, list) and len(dice) == 3:
-        d1, d2, d3 = int(dice[0]), int(dice[1]), int(dice[2])
-        total = d1 + d2 + d3
-        dice_str = f"{d1} · {d2} · {d3} ➔ Tổng {total}"
-        actual = "Tài" if total >= 11 else "Xỉu"
-    elif all(k in item for k in ["dice1", "dice2", "dice3"]):
-        d1, d2, d3 = int(item["dice1"]), int(item["dice2"]), int(item["dice3"])
+    # 2. Trích xuất Xúc xắc (Dice) & Kết quả
+    d1 = d2 = d3 = None
+
+    # Tìm dạng list/array: "dice": [1, 2, 3] hoặc "xuc_xac": [1, 2, 3]
+    for d_key in ["dice", "dices", "xucxac", "xuc_xac", "results", "array"]:
+        if d_key in item and isinstance(item[d_key], list) and len(item[d_key]) >= 3:
+            try:
+                d1, d2, d3 = int(item[d_key][0]), int(item[d_key][1]), int(item[d_key][2])
+                break
+            except:
+                pass
+
+    # Nếu chưa thấy, tìm dạng key lẻ: "dice1", "d1", "xuc_xac_1", ...
+    if d1 is None:
+        pairs = [
+            ("dice1", "dice2", "dice3"),
+            ("d1", "d2", "d3"),
+            ("xucxac1", "xucxac2", "xucxac3"),
+            ("xuc_xac_1", "xuc_xac_2", "xuc_xac_3"),
+            ("v1", "v2", "v3")
+        ]
+        for p1, p2, p3 in pairs:
+            if all(k in item and item[k] is not None for k in [p1, p2, p3]):
+                try:
+                    d1, d2, d3 = int(item[p1]), int(item[p2]), int(item[p3])
+                    break
+                except:
+                    pass
+
+    # Tìm dạng chuỗi: "1,2,3" hoặc "1-2-3" hoặc "1 2 3"
+    if d1 is None:
+        for str_key in ["dice", "dices", "xucxac", "result_str", "ketqua"]:
+            if str_key in item and isinstance(item[str_key], str):
+                nums = re.findall(r'\b[1-6]\b', item[str_key])
+                if len(nums) >= 3:
+                    d1, d2, d3 = int(nums[0]), int(nums[1]), int(nums[2])
+                    break
+
+    # Tính toán xúc xắc & Tài/Xỉu
+    if d1 is not None and d2 is not None and d3 is not None:
         total = d1 + d2 + d3
         dice_str = f"{d1} · {d2} · {d3} ➔ Tổng {total}"
         actual = "Tài" if total >= 11 else "Xỉu"
     else:
-        dice_str = "Chưa cập nhật"
-        res_raw = str(item.get("ketqua", item.get("result", item.get("tai_xiu", "Chưa có")))).upper()
-        if "TÀI" in res_raw or "TAI" in res_raw:
-            actual = "Tài"
-        elif "XỈU" in res_raw or "XIU" in res_raw:
-            actual = "Xỉu"
-        else:
-            actual = "Chưa có"
+        # Nếu không đọc được xúc xắc, thử tìm trường kết quả trực tiếp
+        actual = "Chưa có"
+        for r_key in ["ketqua", "result", "tai_xiu", "taixiu", "kq"]:
+            if r_key in item and item[r_key] is not None:
+                r_val = str(item[r_key]).upper()
+                if "TÀI" in r_val or "TAI" in r_val or r_val == "1":
+                    actual = "Tài"
+                    break
+                elif "XỈU" in r_val or "XIU" in r_val or r_val == "2" or r_val == "0":
+                    actual = "Xỉu"
+                    break
+        
+        dice_str = "Chưa cập nhật" if actual == "Chưa có" else f"Tự động tính ➔ {actual}"
 
-    # Lấy dự đoán trực tiếp từ Tomdayy API
+    # 3. Lấy dự đoán từ Tomdayy
     dudoan, confidence, analysis = fetch_prediction_tomdayy()
 
     return {
@@ -273,7 +314,7 @@ def auto_checker():
             api_json = fetch_api_data(URL_KWIN_REALTIME)
             parsed = parse_kwin_item(api_json)
             
-            if parsed and parsed["phien"] != "0":
+            if parsed and parsed["phien"] != "0" and parsed["actual"] != "Chưa có":
                 curr_phien = parsed["phien"]
                 
                 if curr_phien != LAST_PHIEN_MD5:
