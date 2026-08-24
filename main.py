@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 import threading
 import requests
 from flask import Flask
@@ -68,27 +69,42 @@ def fetch_railway_data(url):
             if isinstance(data, list):
                 return data
             elif isinstance(data, dict):
-                return data.get("data", data.get("history", [data]))
+                for key in ["data", "history", "list", "results"]:
+                    if key in data and isinstance(data[key], list):
+                        return data[key]
+                return [data]
     except Exception as e:
         print(f"❌ Error fetching Railway API ({url}): {e}")
     return None
 
 def parse_item(item):
-    """Trích xuất dữ liệu chuẩn từ item của Railway API"""
-    phien = str(item.get("phien", item.get("session", item.get("id", "0"))))
+    """Trích xuất dữ liệu phiên một cách an toàn"""
+    raw_phien = str(item.get("phien", item.get("session", item.get("id", ""))))
     
-    # Lấy thông tin xúc xắc
+    # Lọc bỏ nếu phien là chuỗi chữ rác (như djtuancon)
+    digits_only = re.sub(r'\D', '', raw_phien)
+    phien = digits_only if digits_only else "0"
+
+    # Lấy xúc xắc
     dice = item.get("dice", item.get("dices", item.get("xucxac", [])))
     if isinstance(dice, list) and len(dice) == 3:
-        total = sum(dice)
+        total = sum(int(x) for x in dice if str(x).isdigit())
         dice_str = f"{dice[0]} · {dice[1]} · {dice[2]} ➔ Tổng {total}"
         actual = "Tài" if total >= 11 else "Xỉu"
     else:
         dice_str = "Chưa cập nhật"
-        actual = str(item.get("result", item.get("ketqua", "Chưa có"))).capitalize()
+        res_raw = str(item.get("result", item.get("ketqua", "Chưa có"))).upper()
+        if "TÀI" in res_raw:
+            actual = "Tài"
+        elif "XỈU" in res_raw:
+            actual = "Xỉu"
+        else:
+            actual = "Chưa có"
 
-    # Lấy dự đoán từ API
-    dudoan = str(item.get("predict", item.get("dudoan", item.get("prediction", "Tài")))).capitalize()
+    # Lấy dự đoán & độ tin cậy
+    dudoan_raw = str(item.get("predict", item.get("dudoan", item.get("prediction", "Tài")))).upper()
+    dudoan = "Tài" if "TÀI" in dudoan_raw else "Xỉu"
+    
     confidence = str(item.get("confidence", item.get("rate", item.get("tyle", "75")))).replace("%", "")
     analysis = item.get("analysis", item.get("lydo", "Kích hoạt mô hình phân tích dữ liệu thuật toán"))
 
@@ -101,6 +117,17 @@ def parse_item(item):
         "analysis": analysis
     }
 
+def get_valid_latest(data_list):
+    """Lọc lấy item chứa dữ liệu phiên thực sự"""
+    if not data_list:
+        return None
+    for item in data_list:
+        if isinstance(item, dict):
+            parsed = parse_item(item)
+            if parsed["phien"] != "0":
+                return parsed
+    return parse_item(data_list[0]) if isinstance(data_list[0], dict) else None
+
 def generate_cau_string(history_list):
     if not history_list:
         return "🔵🔴🔵🔴🔵🔴"
@@ -111,7 +138,8 @@ def generate_cau_string(history_list):
     return "".join(cau_icons)
 
 def format_beauty_message(game_type, data_list):
-    if not data_list or not isinstance(data_list, list) or len(data_list) == 0:
+    parsed_latest = get_valid_latest(data_list)
+    if not parsed_latest:
         return "❌ Không thể lấy dữ liệu từ hệ thống API, vui lòng thử lại sau!"
     
     is_hu = (game_type == "hitclub_hu")
@@ -119,9 +147,7 @@ def format_beauty_message(game_type, data_list):
     st_key = "hu" if is_hu else "md5"
     history_list = HISTORY_HU if is_hu else HISTORY_MD5
 
-    parsed_latest = parse_item(data_list[0])
     prev_phien = parsed_latest["phien"]
-    
     try:
         curr_phien = str(int(prev_phien) + 1)
     except:
@@ -130,7 +156,7 @@ def format_beauty_message(game_type, data_list):
     actual_result = parsed_latest["actual"]
     dice_str = parsed_latest["dice_str"]
 
-    # Đánh giá tay trước
+    # Đánh giá kết quả phiên trước
     last_status = "THẮNG"
     if len(history_list) > 1:
         prev_item = history_list[-2]
@@ -235,14 +261,14 @@ def auto_checker():
         try:
             for game_type, url in RAILWAY_ENDPOINTS.items():
                 data_list = fetch_railway_data(url)
-                if not data_list or not isinstance(data_list, list) or len(data_list) == 0:
+                if not data_list:
                     continue
                 
-                parsed = parse_item(data_list[0])
+                parsed = get_valid_latest(data_list)
+                if not parsed or parsed["phien"] == "0":
+                    continue
+                
                 curr_phien = parsed["phien"]
-                if not curr_phien or curr_phien == "0":
-                    continue
-                
                 last_phien = LAST_PHIEN_HU if game_type == "hitclub_hu" else LAST_PHIEN_MD5
                 history_list = HISTORY_HU if game_type == "hitclub_hu" else HISTORY_MD5
                 st_key = "hu" if game_type == "hitclub_hu" else "md5"
