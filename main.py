@@ -26,7 +26,7 @@ def self_ping():
             requests.get(url, timeout=10)
         except Exception:
             pass
-        time.sleep(120)  # Ping 2 phút/lần để giữ Render luôn sống
+        time.sleep(120)
 
 # ==================== CẤU HÌNH BOT TELEGRAM ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
@@ -79,9 +79,10 @@ def format_beauty_message_image2(game_type, data, last_result=None):
     if not data or not isinstance(data, dict):
         return "❌ Không thể lấy dữ liệu từ hệ thống, vui lòng thử lại sau!"
     
-    game_title = "TÀI XỈU" if game_type == "hitclub_tx" else "MD5"
-    st_key = "tx" if game_type == "hitclub_tx" else "md5"
-    history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
+    is_tx = (game_type == "hitclub_tx")
+    game_title = "TÀI XỈU" if is_tx else "MD5"
+    st_key = "tx" if is_tx else "md5"
+    history_list = HISTORY_TX if is_tx else HISTORY_MD5
 
     curr_phien = data.get("phien", "2581936")
     dudoan = str(data.get("prediction", "Tài")).capitalize()
@@ -94,6 +95,7 @@ def format_beauty_message_image2(game_type, data, last_result=None):
         prev_phien = last_result.get("phien", prev_phien)
         last_status = last_result.get("status_text", "THẮNG")
 
+    eval_icon = "✅" if last_status == "THẮNG" else "❌"
     win_icon = "🔴" if dudoan == "Tài" else "🔵"
     try:
         conf_num = int(float(confidence))
@@ -108,13 +110,16 @@ def format_beauty_message_image2(game_type, data, last_result=None):
 
     cau_str = generate_cau_string(history_list)
 
+    # Ẩn dòng Mã MD5 nếu là sảnh Tài Xỉu (hitclub_tx)
+    md5_line = "🔑 Mã MD5: Chưa cập nhật\n" if not is_tx else ""
+
     msg = (
         f"╭━━━ KẾT QUẢ SẢNH {game_title} ━━━╮\n"
         f"📌 Phiên: {prev_phien}\n"
         f"🎲 Xúc xắc: 2 · 6 · 6 ➔ Tổng 14\n"
-        f"🔑 Mã MD5: Chưa cập nhật\n"
+        f"{md5_line}"
         f"🎯 Kết quả: {dudoan}\n"
-        f"✅ ĐÁNH GIÁ: {last_status}\n"
+        f"{eval_icon} ĐÁNH GIÁ: {last_status}\n"
         f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
         f"╭━━━ 🤖 DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
         f"1️⃣2️⃣ Phiên kế tiếp: {curr_phien}\n\n"
@@ -146,7 +151,7 @@ def get_thongke_text(game_type):
     msg += f"📈 **Tỷ lệ Thắng:** `{wins}/{total}` (`{win_rate}%`)\n"
     msg += f"━━━━━━━━━━━━━━━━━━\n"
     
-    for item in reversed(history_list[-15:]):
+    for item in history_list[-15:]:
         status_str = f"{item.get('status_icon', '⏳')} {item.get('status_text', 'Đang chờ')}"
         msg += f"🔹 `# {item['phien']}`: Dự đoán **{item['prediction']}** (`{item['confidence']}%`) ➡️ {status_str}\n"
     msg += "━━━━━━━━━━━━━━━━━━"
@@ -336,4 +341,3 @@ if __name__ == "__main__":
     threading.Thread(target=self_ping, daemon=True).start()
     threading.Thread(target=auto_checker, daemon=True).start()
     run_bot()
-    
