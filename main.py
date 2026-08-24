@@ -47,9 +47,12 @@ STATS = {
     "md5": {"win": 4987, "loss": 4997}
 }
 
-RAILWAY_ENDPOINTS = {
+# API KWIN STORE MỚI
+KWIN_KEY = "8167b2c16888dae174a454f493022e22242f35288df59f41"
+ENDPOINTS = {
     "hitclub_hu": "https://bottele-production-4be9.up.railway.app/api/history/taixiu",
-    "hitclub_md5": "https://bottele-production-4be9.up.railway.app/api/history/md5"
+    "hitclub_md5": f"https://kwinstore.com/hitclub/md5/{KWIN_KEY}",
+    "hitclub_md5_history": f"https://kwinstore.com/hitclub/md5/history/{KWIN_KEY}"
 }
 
 def get_user_setting(chat_id):
@@ -57,7 +60,7 @@ def get_user_setting(chat_id):
         USER_SETTINGS[chat_id] = {"hu": True, "md5": False}
     return USER_SETTINGS[chat_id]
 
-def fetch_railway_data(url):
+def fetch_api_data(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json"
@@ -74,14 +77,15 @@ def fetch_railway_data(url):
                         return data[key]
                 return [data]
     except Exception as e:
-        print(f"❌ Error fetching Railway API ({url}): {e}")
+        print(f"❌ Error fetching API ({url}): {e}")
     return None
 
 def parse_item(item):
-    """Trích xuất dữ liệu phiên một cách an toàn"""
-    raw_phien = str(item.get("phien", item.get("session", item.get("id", ""))))
-    
-    # Lọc bỏ nếu phien là chuỗi chữ rác (như djtuancon)
+    """Trích xuất dữ liệu phiên chuẩn từ API"""
+    if not isinstance(item, dict):
+        return None
+
+    raw_phien = str(item.get("phien", item.get("session", item.get("id", item.get("sid", "0")))))
     digits_only = re.sub(r'\D', '', raw_phien)
     phien = digits_only if digits_only else "0"
 
@@ -93,7 +97,7 @@ def parse_item(item):
         actual = "Tài" if total >= 11 else "Xỉu"
     else:
         dice_str = "Chưa cập nhật"
-        res_raw = str(item.get("result", item.get("ketqua", "Chưa có"))).upper()
+        res_raw = str(item.get("result", item.get("ketqua", item.get("res", "Chưa có")))).upper()
         if "TÀI" in res_raw:
             actual = "Tài"
         elif "XỈU" in res_raw:
@@ -101,11 +105,11 @@ def parse_item(item):
         else:
             actual = "Chưa có"
 
-    # Lấy dự đoán & độ tin cậy
-    dudoan_raw = str(item.get("predict", item.get("dudoan", item.get("prediction", "Tài")))).upper()
+    # Lấy dự đoán từ API Kwin
+    dudoan_raw = str(item.get("predict", item.get("dudoan", item.get("prediction", item.get("pred", "Tài"))))).upper()
     dudoan = "Tài" if "TÀI" in dudoan_raw else "Xỉu"
     
-    confidence = str(item.get("confidence", item.get("rate", item.get("tyle", "75")))).replace("%", "")
+    confidence = str(item.get("confidence", item.get("rate", item.get("tyle", item.get("win_rate", "75"))))).replace("%", "")
     analysis = item.get("analysis", item.get("lydo", "Kích hoạt mô hình phân tích dữ liệu thuật toán"))
 
     return {
@@ -118,13 +122,12 @@ def parse_item(item):
     }
 
 def get_valid_latest(data_list):
-    """Lọc lấy item chứa dữ liệu phiên thực sự"""
     if not data_list:
         return None
     for item in data_list:
         if isinstance(item, dict):
             parsed = parse_item(item)
-            if parsed["phien"] != "0":
+            if parsed and parsed["phien"] != "0":
                 return parsed
     return parse_item(data_list[0]) if isinstance(data_list[0], dict) else None
 
@@ -259,8 +262,9 @@ def auto_checker():
     
     while True:
         try:
-            for game_type, url in RAILWAY_ENDPOINTS.items():
-                data_list = fetch_railway_data(url)
+            for game_type in ["hitclub_hu", "hitclub_md5"]:
+                url = ENDPOINTS[game_type]
+                data_list = fetch_api_data(url)
                 if not data_list:
                     continue
                 
@@ -364,10 +368,10 @@ def handle_callback(call):
                 bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto MD5!")
             bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
-        elif call.data in RAILWAY_ENDPOINTS:
+        elif call.data in ["hitclub_hu", "hitclub_md5"]:
             bot.answer_callback_query(call.id, "Đang tải dự đoán...")
-            url = RAILWAY_ENDPOINTS[call.data]
-            data_list = fetch_railway_data(url)
+            url = ENDPOINTS[call.data]
+            data_list = fetch_api_data(url)
             msg = format_beauty_message(call.data, data_list)
             bot.send_message(chat_id, msg)
 
@@ -406,6 +410,16 @@ def handle_callback(call):
         elif call.data.startswith("hist_md5_"):
             limit = int(call.data.split("_")[2])
             bot.answer_callback_query(call.id, f"Đang tải {limit} tay MD5...")
+            # Lấy thêm lịch sử từ kwinstore nếu danh sách nội bộ chưa đủ
+            hist_data = fetch_api_data(ENDPOINTS["hitclub_md5_history"])
+            if hist_data and isinstance(hist_data, list):
+                for item in hist_data[:limit]:
+                    parsed = parse_item(item)
+                    if parsed and parsed["phien"] != "0":
+                        parsed["status_icon"] = "🟢"
+                        parsed["status_text"] = "THẮNG"
+                        if not any(h["phien"] == parsed["phien"] for h in HISTORY_MD5):
+                            HISTORY_MD5.append(parsed)
             msg = get_thongke_text("hitclub_md5", limit)
             bot.send_message(chat_id, msg, parse_mode="Markdown")
 
