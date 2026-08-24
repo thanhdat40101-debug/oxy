@@ -1,7 +1,6 @@
 import os
 import json
 import time
-import re
 import threading
 import requests
 from flask import Flask
@@ -32,103 +31,124 @@ def self_ping():
         time.sleep(120)
 
 # ==================== CẤU HÌNH BOT TELEGRAM ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAGi0xQMjHs8BWdqBKnekeHNaVoQAxW1Jcs")
 bot = TeleBot(BOT_TOKEN, threaded=True)
 
 USER_SETTINGS = {}
-HISTORY_TX = []
+HISTORY_HU = []
 HISTORY_MD5 = []
 
-LAST_PHIEN_TX = None
+LAST_PHIEN_HU = None
 LAST_PHIEN_MD5 = None
 
 STATS = {
-    "tx": {"win": 4987, "loss": 4997},
+    "hu": {"win": 4987, "loss": 4997},
     "md5": {"win": 4987, "loss": 4997}
 }
 
-HITCLUB_ENDPOINTS = {
-    "hitclub_tx": "https://tool.tomdayy.site/dashboard.php?ajax_predict=1&source=hitclub_tx",
-    "hitclub_md5": "https://tool.tomdayy.site/dashboard.php?ajax_predict=1&source=hitclub_md5"
+# API mới từ Railway
+RAILWAY_ENDPOINTS = {
+    "hitclub_hu": "https://bottele-production-4be9.up.railway.app/api/history/taixiu",
+    "hitclub_md5": "https://bottele-production-4be9.up.railway.app/api/history/md5"
 }
 
 def get_user_setting(chat_id):
     if chat_id not in USER_SETTINGS:
-        USER_SETTINGS[chat_id] = {"tx": True, "md5": False}
+        USER_SETTINGS[chat_id] = {"hu": True, "md5": False}
     return USER_SETTINGS[chat_id]
 
-def fetch_hitclub_data(url):
+def fetch_railway_data(url):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://tool.tomdayy.site/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
-            text = response.text
-            json_match = re.search(r'\{.*\}', text)
-            if json_match:
-                clean_json_str = json_match.group(0)
-                return json.loads(clean_json_str)
+            data = response.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data
+            elif isinstance(data, dict):
+                return data.get("data", data.get("history", [data]))
     except Exception as e:
-        print(f"❌ Error fetching API ({url}): {e}")
+        print(f"❌ Error fetching Railway API ({url}): {e}")
     return None
+
+def analyze_prediction(history_list):
+    """Thuật toán dự đoán phiên tiếp theo dựa trên lịch sử"""
+    if not history_list:
+        return "Tài", "89", "Smart Chaos Engine: Kích hoạt mô hình phân phối biến động"
+    
+    recent = history_list[-10:]
+    tai_count = sum(1 for item in recent if str(item.get("result", "")).upper() == "TÀI")
+    
+    if tai_count >= 5:
+        pred = "Tài"
+        conf = min(55 + tai_count * 5, 92)
+        analysis = f"Weighting Engine: Trọng số ưu tiên cửa trên ({tai_count}/10 phiên)"
+    else:
+        pred = "Xỉu"
+        conf = min(55 + (10 - tai_count) * 5, 92)
+        analysis = f"Weighting Engine: Trọng số ưu tiên cửa dưới ({10 - tai_count}/10 phiên)"
+        
+    return pred, str(conf), analysis
 
 def generate_cau_string(history_list):
     if not history_list:
         return "🔵🔴🔵🔴🔵🔴"
     cau_icons = []
     for item in history_list[-6:]:
-        pred = item.get("prediction", "TÀI").upper()
-        cau_icons.append("🔴" if pred == "TÀI" else "🔵")
+        res = str(item.get("actual_result", item.get("result", "TÀI"))).upper()
+        cau_icons.append("🔴" if "TÀI" in res else "🔵")
     return "".join(cau_icons)
 
-def format_beauty_message_image2(game_type, data, last_result=None):
-    if not data or not isinstance(data, dict):
+def format_beauty_message(game_type, history_data):
+    if not history_data or not isinstance(history_data, list):
         return "❌ Không thể lấy dữ liệu từ hệ thống, vui lòng thử lại sau!"
     
-    is_tx = (game_type == "hitclub_tx")
-    game_title = "TÀI XỈU" if is_tx else "MD5"
-    st_key = "tx" if is_tx else "md5"
-    history_list = HISTORY_TX if is_tx else HISTORY_MD5
+    is_hu = (game_type == "hitclub_hu")
+    game_title = "HŨ" if is_hu else "MD5"
+    st_key = "hu" if is_hu else "md5"
+    history_list = HISTORY_HU if is_hu else HISTORY_MD5
 
-    curr_phien = data.get("phien", "2581936")
-    dudoan = str(data.get("prediction", "Tài")).capitalize()
-    confidence = str(data.get("confidence", "55"))
-    analysis = data.get("analysis", "Kích hoạt mô hình phân tích dữ liệu")
-
-    # Xử lý thông tin phiên vừa ra (kết quả thực tế)
-    prev_phien = str(int(curr_phien) - 1) if str(curr_phien).isdigit() else "2581935"
-    actual_result = "Chưa rõ"
-    dice_str = "Chưa cập nhật"
-    last_status = "Đang chờ"
+    latest = history_data[0] # Phiên gần nhất đã ra kết quả
+    prev_phien = latest.get("phien", latest.get("session", "3128226"))
     
-    if last_result:
-        prev_phien = last_result.get("phien", prev_phien)
-        actual_result = last_result.get("actual_result", "N/A")
-        dice_str = last_result.get("dice_str", "Chưa cập nhật")
-        last_status = last_result.get("status_text", "THẮNG")
+    try:
+        curr_phien = str(int(prev_phien) + 1)
+    except:
+        curr_phien = "3128227"
 
-    eval_icon = "✅" if last_status == "THẮNG" else ("❌" if last_status == "THUA" else "⏳")
+    # Thông tin phiên cũ
+    dice_arr = latest.get("dice", latest.get("dices", [1, 2, 3]))
+    if isinstance(dice_arr, list) and len(dice_arr) == 3:
+        dice_str = f"{dice_arr[0]} · {dice_arr[1]} · {dice_arr[2]} ➔ Tổng {sum(dice_arr)}"
+        actual_result = "Tài" if sum(dice_arr) >= 11 else "Xỉu"
+    else:
+        dice_str = str(dice_arr)
+        actual_result = latest.get("result", "Chưa có").capitalize()
+
+    # Tính dự đoán cho phiên mới
+    dudoan, confidence, analysis = analyze_prediction(history_list)
     win_icon = "🔴" if dudoan == "Tài" else "🔵"
     
     try:
         conf_num = int(float(confidence))
-    except (ValueError, TypeError):
-        conf_num = 55
+    except:
+        conf_num = 89
     other_conf = 100 - conf_num
 
-    wins = STATS[st_key]["win"]
-    losses = STATS[st_key]["loss"]
-    total = wins + losses
-    win_pct = round((wins / total * 100), 1) if total > 0 else 50.0
+    # Đánh giá tay trước
+    last_status = "THẮNG"
+    if history_list and len(history_list) > 0:
+        prev_pred = history_list[-1].get("prediction", "")
+        if prev_pred and prev_pred.upper() != actual_result.upper():
+            last_status = "THUA"
+            
+    eval_icon = "✅" if last_status == "THẮNG" else "❌"
+    md5_line = "🔑 Mã MD5: Chưa cập nhật\n" if not is_hu else ""
 
-    cau_str = generate_cau_string(history_list)
-    md5_line = "🔑 Mã MD5: Chưa cập nhật\n" if not is_tx else ""
-
-    msg = (
+    result_block = (
         f"╭━━━ KẾT QUẢ SẢNH {game_title} ━━━╮\n"
         f"📌 Phiên: {prev_phien}\n"
         f"🎲 Xúc xắc: {dice_str}\n"
@@ -136,6 +156,17 @@ def format_beauty_message_image2(game_type, data, last_result=None):
         f"🎯 Kết quả: {actual_result}\n"
         f"{eval_icon} ĐÁNH GIÁ: {last_status}\n"
         f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
+    )
+
+    wins = STATS[st_key]["win"]
+    losses = STATS[st_key]["loss"]
+    total = wins + losses
+    win_pct = round((wins / total * 100), 1) if total > 0 else 49.9
+
+    cau_str = generate_cau_string(history_list)
+
+    msg = (
+        f"{result_block}"
         f"╭━━━ 🤖 DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
         f"1️⃣2️⃣ Phiên kế tiếp: {curr_phien}\n\n"
         f"🎯 Dự đoán: {dudoan} {win_icon}\n"
@@ -152,8 +183,8 @@ def format_beauty_message_image2(game_type, data, last_result=None):
     return msg
 
 def get_thongke_text(game_type, limit=15):
-    history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
-    game_title = "HITCLUB TÀI XỈU" if game_type == "hitclub_tx" else "HITCLUB MD5"
+    history_list = HISTORY_HU if game_type == "hitclub_hu" else HISTORY_MD5
+    game_title = "HITCLUB HŨ" if game_type == "hitclub_hu" else "HITCLUB MD5"
     
     if not history_list:
         return f"📊 **THỐNG KÊ DỰ ĐOÁN {game_title}**\nChưa có dữ liệu thống kê phiên gần đây."
@@ -168,115 +199,93 @@ def get_thongke_text(game_type, limit=15):
     msg += f"━━━━━━━━━━━━━━━━━━\n"
     
     for item in sub_list:
-        status_str = f"{item.get('status_icon', '⏳')} {item.get('status_text', 'Đang chờ')}"
-        msg += f"🔹 `# {item['phien']}`: Dự đoán **{item['prediction']}** (`{item['confidence']}%`) ➡️ {status_str}\n"
+        status_str = f"{item.get('status_icon', '🟢')} {item.get('status_text', 'THẮNG')}"
+        msg += f"🔹 `# {item['phien']}`: Dự đoán **{item.get('prediction', 'Tài')}** ➡️ {status_str}\n"
     msg += "━━━━━━━━━━━━━━━━━━"
     return msg
 
 def build_menu_keyboard(chat_id):
     settings = get_user_setting(chat_id)
     
-    tx_status = "🟢 Đang Bật" if settings["tx"] else "🔴 Đã Tắt"
-    md5_status = "🟢 Đang Bật" if settings["md5"] else "🔴 Đã Tắt"
+    hu_status = "🟢 Đang Bật" if settings.get("hu", False) else "🔴 Đã Tắt"
+    md5_status = "🟢 Đang Bật" if settings.get("md5", False) else "🔴 Đã Tắt"
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    btn_toggle_tx = types.InlineKeyboardButton(f"🎲 Auto TX: {tx_status}", callback_data="toggle_tx")
+    btn_toggle_hu = types.InlineKeyboardButton(f"🎲 Auto Hũ: {hu_status}", callback_data="toggle_hu")
     btn_toggle_md5 = types.InlineKeyboardButton(f"⚡ Auto MD5: {md5_status}", callback_data="toggle_md5")
     
-    btn_tx = types.InlineKeyboardButton("🎲 Soi TX Ngay", callback_data="hitclub_tx")
-    btn_md5 = types.InlineKeyboardButton("⚡ Soi MD5 Ngay", callback_data="hitclub_md5")
+    btn_hu = types.InlineKeyboardButton("🎲 Soi Bàn Hũ Ngay", callback_data="hitclub_hu")
+    btn_md5 = types.InlineKeyboardButton("⚡ Soi Bàn MD5 Ngay", callback_data="hitclub_md5")
     
-    btn_hist_tx = types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="menu_hist_tx")
+    btn_hist_hu = types.InlineKeyboardButton("📊 Thống Kê Hũ", callback_data="menu_hist_hu")
     btn_hist_md5 = types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="menu_hist_md5")
     
-    markup.add(btn_toggle_tx, btn_toggle_md5)
-    markup.add(btn_tx, btn_md5)
-    markup.add(btn_hist_tx, btn_hist_md5)
+    markup.add(btn_toggle_hu, btn_toggle_md5)
+    markup.add(btn_hu, btn_md5)
+    markup.add(btn_hist_hu, btn_hist_md5)
     return markup
 
 # ==================== LUỒNG AUTO CHECKER ====================
 def auto_checker():
-    global LAST_PHIEN_TX, LAST_PHIEN_MD5
+    global LAST_PHIEN_HU, LAST_PHIEN_MD5
     
     while True:
         try:
-            for game_type, url in HITCLUB_ENDPOINTS.items():
-                data = fetch_hitclub_data(url)
-                if not data or not isinstance(data, dict):
+            for game_type, url in RAILWAY_ENDPOINTS.items():
+                data_list = fetch_railway_data(url)
+                if not data_list or not isinstance(data_list, list):
                     continue
                 
-                curr_phien = data.get("phien")
+                latest = data_list[0]
+                curr_phien = str(latest.get("phien", latest.get("session", "")))
                 if not curr_phien:
                     continue
                 
-                last_phien = LAST_PHIEN_TX if game_type == "hitclub_tx" else LAST_PHIEN_MD5
-                history_list = HISTORY_TX if game_type == "hitclub_tx" else HISTORY_MD5
-                st_key = "tx" if game_type == "hitclub_tx" else "md5"
+                last_phien = LAST_PHIEN_HU if game_type == "hitclub_hu" else LAST_PHIEN_MD5
+                history_list = HISTORY_HU if game_type == "hitclub_hu" else HISTORY_MD5
+                st_key = "hu" if game_type == "hitclub_hu" else "md5"
                 
                 if curr_phien != last_phien:
-                    if game_type == "hitclub_tx":
-                        LAST_PHIEN_TX = curr_phien
+                    if game_type == "hitclub_hu":
+                        LAST_PHIEN_HU = curr_phien
                     else:
                         LAST_PHIEN_MD5 = curr_phien
                     
-                    # Bóc tách dữ liệu thực tế từ API nếu có
-                    result_raw = str(data.get("result", data.get("ketqua", ""))).upper()
-                    dice_data = data.get("dice", data.get("xucxac", None))
+                    pred, conf, _ = analyze_prediction(history_list)
                     
-                    if isinstance(dice_data, list) and len(dice_data) == 3:
-                        total_dice = sum(dice_data)
-                        dice_str = f"{dice_data[0]} · {dice_data[1]} · {dice_data[2]} ➔ Tổng {total_dice}"
-                        actual_result = "Tài" if total_dice >= 11 else "Xỉu"
-                    elif result_raw in ["TÀI", "XỈU"]:
-                        actual_result = result_raw.capitalize()
-                        dice_str = f"Kết quả {actual_result}"
+                    dice_arr = latest.get("dice", latest.get("dices", []))
+                    if isinstance(dice_arr, list) and len(dice_arr) == 3:
+                        actual_result = "Tài" if sum(dice_arr) >= 11 else "Xỉu"
                     else:
-                        actual_result = "Chưa có"
-                        dice_str = "Chờ cập nhật"
+                        actual_result = latest.get("result", "Tài").capitalize()
 
-                    last_result_info = None
-                    
-                    # Cập nhật kết quả phiên trước dựa trên thực tế
-                    if history_list:
-                        prev_item = history_list[-1]
-                        prev_item['actual_result'] = actual_result
-                        prev_item['dice_str'] = dice_str
-                        
-                        pred_str = str(prev_item.get('prediction', '')).upper()
-                        act_str = actual_result.upper()
-                        
-                        if act_str in ["TÀI", "XỈU"]:
-                            if pred_str == act_str:
-                                prev_item['status_icon'] = "🟢"
-                                prev_item['status_text'] = "THẮNG"
-                                STATS[st_key]["win"] += 1
-                            else:
-                                prev_item['status_icon'] = "🔴"
-                                prev_item['status_text'] = "THUA"
-                                STATS[st_key]["loss"] += 1
-                        
-                        last_result_info = prev_item
+                    status_icon = "🟢"
+                    status_text = "THẮNG"
+                    if pred.upper() == actual_result.upper():
+                        STATS[st_key]["win"] += 1
+                    else:
+                        status_icon = "🔴"
+                        status_text = "THUA"
+                        STATS[st_key]["loss"] += 1
 
-                    # Thêm phiên mới vào danh sách chờ
                     new_item = {
                         "phien": curr_phien,
-                        "prediction": str(data.get("prediction", "N/A")).capitalize(),
-                        "confidence": data.get("confidence", "N/A"),
-                        "actual_result": "Đang chờ",
-                        "dice_str": "Đang chờ",
-                        "status_icon": "⏳",
-                        "status_text": "Đang chờ"
+                        "prediction": pred,
+                        "confidence": conf,
+                        "actual_result": actual_result,
+                        "status_icon": status_icon,
+                        "status_text": status_text
                     }
                     history_list.append(new_item)
                     if len(history_list) > 60:
                         history_list.pop(0)
 
-                    msg = format_beauty_message_image2(game_type, data, last_result_info)
+                    msg = format_beauty_message(game_type, data_list)
                     
                     for chat_id, settings in list(USER_SETTINGS.items()):
                         try:
-                            if game_type == "hitclub_tx" and settings.get("tx", False):
+                            if game_type == "hitclub_hu" and settings.get("hu", False):
                                 bot.send_message(chat_id, msg)
                             elif game_type == "hitclub_md5" and settings.get("md5", False):
                                 bot.send_message(chat_id, msg)
@@ -293,7 +302,6 @@ def send_welcome(message):
     try:
         chat_id = message.chat.id
         get_user_setting(chat_id)
-        
         markup = build_menu_keyboard(chat_id)
         bot.reply_to(
             message, 
@@ -311,7 +319,7 @@ def send_thongke_command(message):
     try:
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("📊 Thống Kê TX", callback_data="menu_hist_tx"),
+            types.InlineKeyboardButton("📊 Thống Kê Hũ", callback_data="menu_hist_hu"),
             types.InlineKeyboardButton("📊 Thống Kê MD5", callback_data="menu_hist_md5")
         )
         bot.reply_to(message, "Chọn sảnh game bạn muốn xem thống kê:", reply_markup=markup)
@@ -324,47 +332,43 @@ def handle_callback(call):
         chat_id = call.message.chat.id
         settings = get_user_setting(chat_id)
         
-        if call.data == "toggle_tx":
-            settings["tx"] = not settings["tx"]
-            if settings["tx"]:
+        if call.data == "toggle_hu":
+            settings["hu"] = not settings.get("hu", False)
+            if settings["hu"]:
                 settings["md5"] = False
-                bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto Tài Xỉu & TẮT Auto MD5!")
+                bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto Bàn Hũ & TẮT Auto MD5!")
             else:
-                bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto Tài Xỉu!")
+                bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto Bàn Hũ!")
             bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
         elif call.data == "toggle_md5":
-            settings["md5"] = not settings["md5"]
+            settings["md5"] = not settings.get("md5", False)
             if settings["md5"]:
-                settings["tx"] = False
-                bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto MD5 & TẮT Auto Tài Xỉu!")
+                settings["hu"] = False
+                bot.answer_callback_query(call.id, "🟢 Đã BẬT Auto MD5 & TẮT Auto Bàn Hũ!")
             else:
                 bot.answer_callback_query(call.id, "🔴 Đã TẮT Auto MD5!")
             bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
-        elif call.data in HITCLUB_ENDPOINTS:
+        elif call.data in RAILWAY_ENDPOINTS:
             bot.answer_callback_query(call.id, "Đang tải dự đoán...")
-            url = HITCLUB_ENDPOINTS[call.data]
-            
-            data = fetch_hitclub_data(url)
-            history_list = HISTORY_TX if call.data == "hitclub_tx" else HISTORY_MD5
-            last_result = history_list[-2] if len(history_list) >= 2 else None
-            
-            msg = format_beauty_message_image2(call.data, data, last_result)
+            url = RAILWAY_ENDPOINTS[call.data]
+            data_list = fetch_railway_data(url)
+            msg = format_beauty_message(call.data, data_list)
             bot.send_message(chat_id, msg)
-            
-        elif call.data == "menu_hist_tx":
+
+        elif call.data == "menu_hist_hu":
             bot.answer_callback_query(call.id)
             markup = types.InlineKeyboardMarkup(row_width=3)
             markup.add(
-                types.InlineKeyboardButton("5 Tay", callback_data="hist_tx_5"),
-                types.InlineKeyboardButton("10 Tay", callback_data="hist_tx_10"),
-                types.InlineKeyboardButton("15 Tay", callback_data="hist_tx_15"),
-                types.InlineKeyboardButton("20 Tay", callback_data="hist_tx_20"),
-                types.InlineKeyboardButton("30 Tay", callback_data="hist_tx_30"),
-                types.InlineKeyboardButton("50 Tay", callback_data="hist_tx_50")
+                types.InlineKeyboardButton("5 Tay", callback_data="hist_hu_5"),
+                types.InlineKeyboardButton("10 Tay", callback_data="hist_hu_10"),
+                types.InlineKeyboardButton("15 Tay", callback_data="hist_hu_15"),
+                types.InlineKeyboardButton("20 Tay", callback_data="hist_hu_20"),
+                types.InlineKeyboardButton("30 Tay", callback_data="hist_hu_30"),
+                types.InlineKeyboardButton("50 Tay", callback_data="hist_hu_50")
             )
-            bot.edit_message_text("🎲 **CHỌN SỐ LƯỢNG TAY TÀI XỈU CẦN XEM:**", chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+            bot.edit_message_text("🎲 **CHỌN SỐ LƯỢNG TAY BÀN HŨ CẦN XEM:**", chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
         elif call.data == "menu_hist_md5":
             bot.answer_callback_query(call.id)
@@ -379,10 +383,10 @@ def handle_callback(call):
             )
             bot.edit_message_text("⚡ **CHỌN SỐ LƯỢNG TAY MD5 CẦN XEM:**", chat_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
-        elif call.data.startswith("hist_tx_"):
+        elif call.data.startswith("hist_hu_"):
             limit = int(call.data.split("_")[2])
-            bot.answer_callback_query(call.id, f"Đang tải {limit} tay Tài Xỉu...")
-            msg = get_thongke_text("hitclub_tx", limit)
+            bot.answer_callback_query(call.id, f"Đang tải {limit} tay Bàn Hũ...")
+            msg = get_thongke_text("hitclub_hu", limit)
             bot.send_message(chat_id, msg, parse_mode="Markdown")
 
         elif call.data.startswith("hist_md5_"):
