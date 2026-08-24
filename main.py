@@ -41,9 +41,11 @@ LAST_PHIEN_MD5 = None
 
 STATS_MD5 = {"win": 4987, "loss": 4997}
 
+# API URLS
 KWIN_KEY = "8167b2c16888dae174a454f493022e22242f35288df59f41"
-URL_REALTIME = f"https://kwinstore.com/hitclub/md5/{KWIN_KEY}"
-URL_HISTORY = f"https://kwinstore.com/hitclub/md5/history/{KWIN_KEY}"
+URL_KWIN_REALTIME = f"https://kwinstore.com/hitclub/md5/{KWIN_KEY}"
+URL_KWIN_HISTORY = f"https://kwinstore.com/hitclub/md5/history/{KWIN_KEY}"
+URL_PREDICT_TOMDAYY = "https://tool.tomdayy.site/dashboard.php?ajax_predict=1&source=hitclub_md5"
 
 def get_user_setting(chat_id):
     if chat_id not in USER_SETTINGS:
@@ -53,24 +55,51 @@ def get_user_setting(chat_id):
 def fetch_api_data(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json"
+        "Accept": "application/json, text/javascript, */*; q=0.01"
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
-            return response.json()
+            try:
+                return response.json()
+            except:
+                return response.text
     except Exception as e:
         print(f"❌ Error fetching API ({url}): {e}")
     return None
 
+def fetch_prediction_tomdayy():
+    """Lấy dự đoán từ API tomdayy.site"""
+    raw_data = fetch_api_data(URL_PREDICT_TOMDAYY)
+    
+    dudoan = "Tài"
+    confidence = 85
+    analysis = "Kích hoạt mô hình phân tích thuật toán Tomdayy"
+
+    if isinstance(raw_data, dict):
+        pred_raw = str(raw_data.get("predict", raw_data.get("dudoan", raw_data.get("result", "Tài")))).upper()
+        dudoan = "Tài" if ("TÀI" in pred_raw or "TAI" in pred_raw) else "Xỉu"
+        
+        conf_raw = str(raw_data.get("confidence", raw_data.get("rate", raw_data.get("tyle", "85")))).replace("%", "")
+        try:
+            confidence = int(float(conf_raw))
+        except:
+            confidence = 85
+            
+        analysis = raw_data.get("analysis", raw_data.get("lydo", analysis))
+    elif isinstance(raw_data, str):
+        if "XỈU" in raw_data.upper() or "XIU" in raw_data.upper():
+            dudoan = "Xỉu"
+        elif "TÀI" in raw_data.upper() or "TAI" in raw_data.upper():
+            dudoan = "Tài"
+
+    return dudoan, confidence, analysis
+
 def parse_kwin_item(data):
-    """
-    Tự động đọc linh hoạt mọi cấu trúc JSON từ kwinstore
-    """
+    """Trích xuất dữ liệu bàn từ API Kwinstore"""
     if not data:
         return None
 
-    # Nếu API trả về dict chứa key data/result
     if isinstance(data, dict):
         item = data.get("data", data.get("result", data))
         if isinstance(item, list) and len(item) > 0:
@@ -83,12 +112,12 @@ def parse_kwin_item(data):
     if not isinstance(item, dict):
         return None
 
-    # 1. Trích xuất Phiên
+    # Trích xuất Phiên
     raw_phien = str(item.get("phien", item.get("phien_cu", item.get("session", item.get("sid", "0")))))
     phien_digits = re.sub(r'\D', '', raw_phien)
     phien = phien_digits if phien_digits else "0"
 
-    # 2. Trích xuất Xúc xắc & Kết quả
+    # Trích xuất Xúc xắc & Kết quả
     dice = item.get("dice", item.get("dices", item.get("xucxac", [])))
     if isinstance(dice, list) and len(dice) == 3:
         d1, d2, d3 = int(dice[0]), int(dice[1]), int(dice[2])
@@ -110,24 +139,15 @@ def parse_kwin_item(data):
         else:
             actual = "Chưa có"
 
-    # 3. Trích xuất Dự đoán & Độ tin cậy
-    pred_raw = str(item.get("dudoan", item.get("predict", item.get("du_doan", "Tài")))).upper()
-    dudoan = "Tài" if ("TÀI" in pred_raw or "TAI" in pred_raw) else "Xỉu"
-
-    conf_raw = str(item.get("tyle", item.get("confidence", item.get("rate", "85")))).replace("%", "")
-    try:
-        conf_num = int(float(conf_raw))
-    except:
-        conf_num = 85
-
-    analysis = item.get("lydo", item.get("analysis", "Kích hoạt mô hình phân tích thuật toán KwinStore"))
+    # Lấy dự đoán từ tomdayy.site
+    dudoan, confidence, analysis = fetch_prediction_tomdayy()
 
     return {
         "phien": phien,
         "dice_str": dice_str,
         "actual": actual,
         "dudoan": dudoan,
-        "confidence": conf_num,
+        "confidence": confidence,
         "analysis": analysis
     }
 
@@ -140,10 +160,10 @@ def generate_cau_string():
         cau_icons.append("🔴" if "TÀI" in res else "🔵")
     return "".join(cau_icons)
 
-def format_beauty_message(raw_json):
-    parsed = parse_kwin_item(raw_json)
+def format_beauty_message(kwin_json):
+    parsed = parse_kwin_item(kwin_json)
     if not parsed or parsed["phien"] == "0":
-        return "❌ Không thể phân tích dữ liệu API KwinStore, vui lòng kiểm tra lại!"
+        return "❌ Không thể phân tích dữ liệu API, vui lòng kiểm tra lại!"
 
     prev_phien = parsed["phien"]
     try:
@@ -240,7 +260,7 @@ def auto_checker():
     
     while True:
         try:
-            api_json = fetch_api_data(URL_REALTIME)
+            api_json = fetch_api_data(URL_KWIN_REALTIME)
             parsed = parse_kwin_item(api_json)
             
             if parsed and parsed["phien"] != "0":
@@ -325,8 +345,8 @@ def handle_callback(call):
             bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_menu_keyboard(chat_id))
 
         elif call.data == "soi_md5_now":
-            bot.answer_callback_query(call.id, "Đang tải dữ liệu KwinStore...")
-            api_json = fetch_api_data(URL_REALTIME)
+            bot.answer_callback_query(call.id, "Đang tải dự đoán...")
+            api_json = fetch_api_data(URL_KWIN_REALTIME)
             msg = format_beauty_message(api_json)
             bot.send_message(chat_id, msg)
 
@@ -347,8 +367,7 @@ def handle_callback(call):
             limit = int(call.data.split("_")[2])
             bot.answer_callback_query(call.id, f"Đang tải {limit} tay MD5...")
             
-            # Đồng bộ lịch sử từ API Kwin nếu dữ liệu nội bộ ít
-            hist_json = fetch_api_data(URL_HISTORY)
+            hist_json = fetch_api_data(URL_KWIN_HISTORY)
             if hist_json:
                 raw_list = hist_json if isinstance(hist_json, list) else hist_json.get("data", [])
                 if isinstance(raw_list, list):
