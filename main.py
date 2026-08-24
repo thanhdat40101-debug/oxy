@@ -5,7 +5,7 @@ import requests
 from flask import Flask
 from telebot import TeleBot, types
 
-# Tạo web server giả để Render cấp link
+# Tạo web server giả để Render không báo lỗi Port
 app = Flask(__name__)
 
 @app.route('/')
@@ -18,7 +18,7 @@ def run_web():
 
 # Token và logic Bot Telegram
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8834697381:AAEhaB1xAZ5g6yTYL4v1HDpXUuNw9SalnbI")
-API_KEY = os.getenv("API_KEY", "YOUR_KEY")
+API_KEY = os.getenv("API_KEY", "YOUR_KEY")  # Thay YOUR_KEY thành key kwinstore của bạn
 BASE_URL = "https://kwinstore.com"
 
 bot = TeleBot(BOT_TOKEN, threaded=True)
@@ -70,10 +70,9 @@ def handle_callback(call):
 
 def run_bot():
     print("Bot Sumclub đang chạy...")
-    bot.infinity_polling(non_stop=True)
+    # Đã bỏ tham số non_stop=True để hết lỗi
+    bot.infinity_polling(timeout=60, long_polling_timeout=30)
 
 if __name__ == "__main__":
-    # Chạy Web Server trên 1 luồng riêng
     threading.Thread(target=run_web).start()
-    # Chạy Bot Telegram
     run_bot()
