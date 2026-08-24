@@ -197,7 +197,7 @@ def format_beauty_message(game_type, data_list):
 
     msg = (
         f"{result_block}"
-        f"╭━━━ 🤖 DỰ ĐOÁN THÔNG MINH 🤖 ━━━╮\n"
+        f"╭━━━ 🤖 DỰ ĐOÁN NGU HAHA 🤖 ━━━╮\n"
         f"1️⃣2️⃣ Phiên kế tiếp: {curr_phien}\n\n"
         f"🎯 Dự đoán: {dudoan} {win_icon}\n"
         f"📊 Độ tin cậy: {conf_num}%\n"
