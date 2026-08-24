@@ -101,15 +101,8 @@ def fetch_prediction_tomdayy():
 
     return dudoan, confidence, analysis
 
-def parse_kwin_item(data):
-    """
-    Trích xuất kết quả phiên, xúc xắc và kết quả Tài/Xỉu từ API Kwinstore
-    Hỗ trợ mọi định dạng key dữ liệu của Kwin MD5.
-    """
-    if not data:
-        return None
-
-    # Tìm dict thực sự chứa dữ liệu
+def extract_item_raw(data):
+    """Tìm đối tượng dict chính xác từ API Kwin"""
     item = data
     if isinstance(item, dict):
         for key in ["data", "result", "list", "items"]:
@@ -120,10 +113,14 @@ def parse_kwin_item(data):
     if isinstance(item, list) and len(item) > 0:
         item = item[0]
 
-    if not isinstance(item, dict):
-        return None
+    return item if isinstance(item, dict) else None
 
-    # 1. Trích xuất Phiên
+def parse_dice_and_result(item):
+    """Trích xuất phiên, xúc xắc và kết quả Tài/Xỉu"""
+    if not item:
+        return "0", "Chưa cập nhật", "Chưa có"
+
+    # Trích xuất Phiên
     phien = "0"
     for p_key in ["phien", "phien_cu", "session", "sid", "id", "phien_id"]:
         if p_key in item and item[p_key] is not None:
@@ -132,10 +129,8 @@ def parse_kwin_item(data):
                 phien = digits
                 break
 
-    # 2. Trích xuất Xúc xắc (Dice) & Kết quả
+    # Trích xuất Xúc xắc
     d1 = d2 = d3 = None
-
-    # Tìm dạng list/array: "dice": [1, 2, 3] hoặc "xuc_xac": [1, 2, 3]
     for d_key in ["dice", "dices", "xucxac", "xuc_xac", "results", "array"]:
         if d_key in item and isinstance(item[d_key], list) and len(item[d_key]) >= 3:
             try:
@@ -144,15 +139,8 @@ def parse_kwin_item(data):
             except:
                 pass
 
-    # Nếu chưa thấy, tìm dạng key lẻ: "dice1", "d1", "xuc_xac_1", ...
     if d1 is None:
-        pairs = [
-            ("dice1", "dice2", "dice3"),
-            ("d1", "d2", "d3"),
-            ("xucxac1", "xucxac2", "xucxac3"),
-            ("xuc_xac_1", "xuc_xac_2", "xuc_xac_3"),
-            ("v1", "v2", "v3")
-        ]
+        pairs = [("dice1", "dice2", "dice3"), ("d1", "d2", "d3"), ("xucxac1", "xucxac2", "xucxac3")]
         for p1, p2, p3 in pairs:
             if all(k in item and item[k] is not None for k in [p1, p2, p3]):
                 try:
@@ -161,24 +149,13 @@ def parse_kwin_item(data):
                 except:
                     pass
 
-    # Tìm dạng chuỗi: "1,2,3" hoặc "1-2-3" hoặc "1 2 3"
-    if d1 is None:
-        for str_key in ["dice", "dices", "xucxac", "result_str", "ketqua"]:
-            if str_key in item and isinstance(item[str_key], str):
-                nums = re.findall(r'\b[1-6]\b', item[str_key])
-                if len(nums) >= 3:
-                    d1, d2, d3 = int(nums[0]), int(nums[1]), int(nums[2])
-                    break
-
-    # Tính toán xúc xắc & Tài/Xỉu
     if d1 is not None and d2 is not None and d3 is not None:
         total = d1 + d2 + d3
         dice_str = f"{d1} · {d2} · {d3} ➔ Tổng {total}"
         actual = "Tài" if total >= 11 else "Xỉu"
     else:
-        # Nếu không đọc được xúc xắc, thử tìm trường kết quả trực tiếp
         actual = "Chưa có"
-        for r_key in ["ketqua", "result", "tai_xiu", "taixiu", "kq"]:
+        for r_key in ["ketqua", "result", "tai_xiu", "taixiu"]:
             if r_key in item and item[r_key] is not None:
                 r_val = str(item[r_key]).upper()
                 if "TÀI" in r_val or "TAI" in r_val or r_val == "1":
@@ -187,10 +164,17 @@ def parse_kwin_item(data):
                 elif "XỈU" in r_val or "XIU" in r_val or r_val == "2" or r_val == "0":
                     actual = "Xỉu"
                     break
-        
         dice_str = "Chưa cập nhật" if actual == "Chưa có" else f"Tự động tính ➔ {actual}"
 
-    # 3. Lấy dự đoán từ Tomdayy
+    return phien, dice_str, actual
+
+def parse_kwin_item(data):
+    """Trích xuất phiên thời gian thực (Có gọi API Tomdayy)"""
+    item = extract_item_raw(data)
+    if not item:
+        return None
+
+    phien, dice_str, actual = parse_dice_and_result(item)
     dudoan, confidence, analysis = fetch_prediction_tomdayy()
 
     return {
@@ -200,6 +184,36 @@ def parse_kwin_item(data):
         "dudoan": dudoan,
         "confidence": confidence,
         "analysis": analysis
+    }
+
+def parse_history_item_fast(item):
+    """
+    Trích xuất phiên lịch sử CỰC NHANH (Không gọi API Tomdayy để tránh nghẽn)
+    """
+    if not isinstance(item, dict):
+        return None
+
+    phien, dice_str, actual = parse_dice_and_result(item)
+    if phien == "0":
+        return None
+
+    # Tìm trong bộ nhớ HISTORY_MD5 xem phiên này trước đó dự đoán là gì
+    dudoan = "Tài"
+    for h in HISTORY_MD5:
+        if h.get("phien") == phien:
+            dudoan = h.get("dudoan", "Tài")
+            break
+
+    status_icon = "🟢" if dudoan.upper() == actual.upper() else "🔴"
+    status_text = "THẮNG" if dudoan.upper() == actual.upper() else "THUA"
+
+    return {
+        "phien": phien,
+        "dice_str": dice_str,
+        "actual": actual,
+        "dudoan": dudoan,
+        "status_icon": status_icon,
+        "status_text": status_text
     }
 
 def generate_cau_string():
@@ -225,7 +239,6 @@ def format_beauty_message(kwin_json):
     actual_result = parsed["actual"]
     dice_str = parsed["dice_str"]
 
-    # Đánh giá tay trước
     last_status = "THẮNG"
     if len(HISTORY_MD5) > 1:
         prev_item = HISTORY_MD5[-2]
@@ -273,25 +286,6 @@ def format_beauty_message(kwin_json):
     )
     return msg
 
-def get_thongke_text(limit=15):
-    if not HISTORY_MD5:
-        return "📊 **THỐNG KÊ DỰ ĐOÁN HITCLUB MD5**\nChưa có dữ liệu thống kê phiên gần đây."
-    
-    sub_list = HISTORY_MD5[-limit:]
-    wins = sum(1 for item in sub_list if item.get('status_text') == 'THẮNG')
-    total = len(sub_list)
-    win_rate = round((wins / total * 100), 1) if total > 0 else 0.0
-
-    msg = f"📊 **THỐNG KÊ {total} PHIÊN GẦN ĐÂY - HITCLUB MD5**\n"
-    msg += f"📈 **Tỷ lệ Thắng:** `{wins}/{total}` (`{win_rate}%`)\n"
-    msg += f"━━━━━━━━━━━━━━━━━━\n"
-    
-    for item in sub_list:
-        status_str = f"{item.get('status_icon', '🟢')} {item.get('status_text', 'THẮNG')}"
-        msg += f"🔹 `# {item['phien']}`: Dự đoán **{item.get('dudoan', 'Tài')}** ➡️ {status_str}\n"
-    msg += "━━━━━━━━━━━━━━━━━━"
-    return msg
-
 def build_menu_keyboard(chat_id):
     settings = get_user_setting(chat_id)
     auto_status = "🟢 Đang Bật" if settings.get("auto_md5", True) else "🔴 Đã Tắt"
@@ -333,7 +327,7 @@ def auto_checker():
                     parsed["status_text"] = status_text
                     
                     HISTORY_MD5.append(parsed)
-                    if len(HISTORY_MD5) > 60:
+                    if len(HISTORY_MD5) > 100:
                         HISTORY_MD5.pop(0)
 
                     msg = format_beauty_message(api_json)
@@ -419,18 +413,31 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, f"Đang tải {limit} tay MD5...")
             
             hist_json = fetch_api_data(URL_KWIN_HISTORY)
+            temp_list = []
+            
             if hist_json:
-                raw_list = hist_json if isinstance(hist_json, list) else hist_json.get("data", [])
+                raw_list = hist_json if isinstance(hist_json, list) else hist_json.get("data", hist_json.get("result", []))
                 if isinstance(raw_list, list):
                     for item in raw_list[:limit]:
-                        parsed = parse_kwin_item(item)
-                        if parsed and parsed["phien"] != "0":
-                            parsed["status_icon"] = "🟢"
-                            parsed["status_text"] = "THẮNG"
-                            if not any(h["phien"] == parsed["phien"] for h in HISTORY_MD5):
-                                HISTORY_MD5.append(parsed)
-                                
-            msg = get_thongke_text(limit)
+                        parsed = parse_history_item_fast(item)
+                        if parsed:
+                            temp_list.append(parsed)
+
+            if not temp_list:
+                temp_list = HISTORY_MD5[-limit:]
+
+            wins = sum(1 for item in temp_list if item.get('status_text') == 'THẮNG')
+            total = len(temp_list)
+            win_rate = round((wins / total * 100), 1) if total > 0 else 0.0
+
+            msg = f"📊 **THỐNG KÊ {total} PHIÊN GẦN ĐÂY - HITCLUB MD5**\n"
+            msg += f"📈 **Tỷ lệ Thắng:** `{wins}/{total}` (`{win_rate}%`)\n"
+            msg += f"━━━━━━━━━━━━━━━━━━\n"
+            
+            for item in temp_list:
+                msg += f"🔹 `# {item['phien']}`: Dự đoán **{item.get('dudoan', 'Tài')}** ➡️ {item.get('status_icon', '🟢')} {item.get('status_text', 'THẮNG')}\n"
+            msg += "━━━━━━━━━━━━━━━━━━"
+
             bot.send_message(chat_id, msg, parse_mode="Markdown")
 
     except Exception as e:
